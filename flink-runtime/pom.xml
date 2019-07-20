@@ -25,7 +25,7 @@ under the License.
 	<parent>
 		<groupId>org.apache.flink</groupId>
 		<artifactId>flink-parent</artifactId>
-		<version>1.11-SNAPSHOT</version>
+		<version>20190720</version>
 		<relativePath>..</relativePath>
 	</parent>
 
@@ -90,7 +90,7 @@ under the License.
 
 		<dependency>
 			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-shaded-asm-7</artifactId>
+			<artifactId>flink-shaded-asm-6</artifactId>
 		</dependency>
 
 		<dependency>
@@ -252,13 +252,6 @@ under the License.
 			<groupId>org.apache.flink</groupId>
 			<artifactId>flink-shaded-curator</artifactId>
 			<version>${project.version}</version>
-		</dependency>
-
-		<!-- Lz4 compression library -->
-		<dependency>
-			<groupId>org.lz4</groupId>
-			<artifactId>lz4-java</artifactId>
-			<version>1.5.0</version>
 		</dependency>
 
 		<!-- test dependencies -->
@@ -559,6 +552,7 @@ under the License.
 								</relocation>
 								<relocation>
 									<pattern>org.apache.curator</pattern>
+									<!-- IMPORTANT: This must be kept in sync with flink-connector-kafka-0.8 -->
 									<shadedPattern>org.apache.flink.shaded.curator.org.apache.curator</shadedPattern>
 									<excludes>
 										<!-- Do not relocate curator-test. This leads to problems for downstream
@@ -583,7 +577,7 @@ under the License.
 									<excludes>
 										<!-- Only some of these licenses actually apply to the JAR and have been manually
 										 	placed in this module's resources directory. -->
-										<exclude>META-INF/license/**</exclude>
+										<exclude>META-INF/license</exclude>
 										<!-- Only parts of NOTICE file actually apply to the netty JAR and have been manually
 										 	copied into this modules's NOTICE file. -->
 										<exclude>META-INF/NOTICE.txt</exclude>
