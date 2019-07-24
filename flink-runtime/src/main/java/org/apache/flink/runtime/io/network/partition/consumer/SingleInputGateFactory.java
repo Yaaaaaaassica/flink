@@ -199,38 +199,38 @@ public class SingleInputGateFactory {
 	}
 
 	private InputChannel createKnownInputChannel(
-			SingleInputGate inputGate,
-			int index,
-			NettyShuffleDescriptor inputChannelDescriptor,
-			ChannelStatistics channelStatistics,
-			InputChannelMetrics metrics) {
+		SingleInputGate inputGate,
+		int index,
+		NettyShuffleDescriptor inputChannelDescriptor,
+		ChannelStatistics channelStatistics,
+		InputChannelMetrics metrics) {
 		ResultPartitionID partitionId = inputChannelDescriptor.getResultPartitionID();
-		if (inputChannelDescriptor.isLocalTo(taskExecutorResourceId)) {
-			// Consuming task is deployed to the same TaskManager as the partition => local
-			channelStatistics.numLocalChannels++;
-			return new LocalInputChannel(
-				inputGate,
-				index,
-				partitionId,
-				partitionManager,
-				taskEventPublisher,
-				partitionRequestInitialBackoff,
-				partitionRequestMaxBackoff,
-				metrics);
-		} else {
-			// Different instances => remote
-			channelStatistics.numRemoteChannels++;
-			return new RemoteInputChannel(
-				inputGate,
-				index,
-				partitionId,
-				inputChannelDescriptor.getConnectionId(),
-				connectionManager,
-				partitionRequestInitialBackoff,
-				partitionRequestMaxBackoff,
-				metrics,
-				networkBufferPool);
-		}
+		//	if (inputChannelDescriptor.isLocalTo(taskExecutorResourceId)) {
+		// Consuming task is deployed to the same TaskManager as the partition => local
+//			channelStatistics.numLocalChannels++;
+//			return new LocalInputChannel(
+//				inputGate,
+//				index,
+//				partitionId,
+//				partitionManager,
+//				taskEventPublisher,
+//				partitionRequestInitialBackoff,
+//				partitionRequestMaxBackoff,
+//				metrics);
+//		} else {
+		// Different instances => remote
+		channelStatistics.numRemoteChannels++;
+		return new RemoteInputChannel(
+			inputGate,
+			index,
+			partitionId,
+			inputChannelDescriptor.getConnectionId(),
+			connectionManager,
+			partitionRequestInitialBackoff,
+			partitionRequestMaxBackoff,
+			metrics,
+			networkBufferPool);
+		//}
 	}
 
 	@VisibleForTesting
