@@ -497,7 +497,7 @@ public class NettyShuffleEnvironmentConfiguration {
 		int dataport) {
 
 		final NettyConfig nettyConfig;
-		if (!localTaskManagerCommunication) {
+	//	if (!localTaskManagerCommunication) {
 			final InetSocketAddress taskManagerInetSocketAddress = new InetSocketAddress(taskManagerAddress, dataport);
 
 			nettyConfig = new NettyConfig(
@@ -506,9 +506,9 @@ public class NettyShuffleEnvironmentConfiguration {
 				ConfigurationParserUtils.getPageSize(configuration),
 				ConfigurationParserUtils.getSlot(configuration),
 				configuration);
-		} else {
-			nettyConfig = null;
-		}
+//		} else {
+//			nettyConfig = null;
+//		}
 
 		return nettyConfig;
 	}
