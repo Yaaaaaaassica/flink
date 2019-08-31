@@ -439,12 +439,19 @@ class AkkaRpcActor<T extends RpcEndpoint & RpcGateway> extends AbstractActor {
 ```
 
 ```scala
--------------------------------------------+
-|server(endpoint)
-|
-|
-|-------------------------------------------
+
+server(endpoint)
+   ||
+   ||==>AkkaRpcActor(has the endpoint ref)
+        ||
+        || recive
+        ||==>handleMessage
+               ||
+               ||==> invoke(endpoint,args)
+
 ```
+
+rpcserver 代理整个akkaactor的生命周期，AkkaRpcActor包含endPoint的引用，接受rpc，然后反射调用endpoint的method
 
 
 [所以整个流程是这样的](../flink-runtime/src/test/scala/myakkatest.scala)
@@ -466,5 +473,7 @@ client(proxy)
                                                       
 
 ```
+客户端只要给出一个address，代理的实例，调方法时，使用了jdk代理，把参数分装为rpcinvocation，由于已经连接了actor，通过actor把rpcinvocation发过去，
 
+akkaRpcActor接受rpcinvocation，执行，返回给client。
 
