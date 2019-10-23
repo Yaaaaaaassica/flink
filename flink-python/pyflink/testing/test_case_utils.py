@@ -28,19 +28,12 @@ from py4j.java_gateway import JavaObject
 from py4j.protocol import Py4JJavaError
 
 from pyflink.table.sources import CsvTableSource
-
 from pyflink.dataset import ExecutionEnvironment
 from pyflink.datastream import StreamExecutionEnvironment
-
 from pyflink.find_flink_home import _find_flink_home
-from pyflink.table import BatchTableEnvironment, StreamTableEnvironment
+from pyflink.table import BatchTableEnvironment, StreamTableEnvironment, EnvironmentSettings
 from pyflink.java_gateway import get_gateway
 
-if sys.version_info[0] >= 3:
-    xrange = range
-else:
-    unittest.TestCase.assertRaisesRegex = unittest.TestCase.assertRaisesRegexp
-    unittest.TestCase.assertRegex = unittest.TestCase.assertRegexpMatches
 
 if os.getenv("VERBOSE"):
     log_level = logging.DEBUG
@@ -99,7 +92,7 @@ class PyFlinkTestCase(unittest.TestCase):
     @classmethod
     def to_py_list(cls, actual):
         py_list = []
-        for i in xrange(0, actual.length()):
+        for i in range(0, actual.length()):
             py_list.append(actual.apply(i))
         return py_list
 
@@ -121,7 +114,7 @@ class PyFlinkTestCase(unittest.TestCase):
 
 class PyFlinkStreamTableTestCase(PyFlinkTestCase):
     """
-    Base class for stream unit tests.
+    Base class for stream tests.
     """
 
     def setUp(self):
@@ -133,7 +126,7 @@ class PyFlinkStreamTableTestCase(PyFlinkTestCase):
 
 class PyFlinkBatchTableTestCase(PyFlinkTestCase):
     """
-    Base class for batch unit tests.
+    Base class for batch tests.
     """
 
     def setUp(self):
@@ -149,6 +142,32 @@ class PyFlinkBatchTableTestCase(PyFlinkTestCase):
             .toDataSet(j_table, gateway.jvm.Class.forName("org.apache.flink.types.Row")).collect()
         string_result = [java_row.toString() for java_row in row_result]
         return string_result
+
+
+class PyFlinkBlinkStreamTableTestCase(PyFlinkTestCase):
+    """
+    Base class for stream tests of blink planner.
+    """
+
+    def setUp(self):
+        super(PyFlinkBlinkStreamTableTestCase, self).setUp()
+        self.env = StreamExecutionEnvironment.get_execution_environment()
+
+        self.t_env = StreamTableEnvironment.create(
+            self.env, environment_settings=EnvironmentSettings.new_instance()
+                .in_streaming_mode().use_blink_planner().build())
+
+
+class PyFlinkBlinkBatchTableTestCase(PyFlinkTestCase):
+    """
+    Base class for batch tests of blink planner.
+    """
+
+    def setUp(self):
+        super(PyFlinkBlinkBatchTableTestCase, self).setUp()
+        self.t_env = BatchTableEnvironment.create(
+            environment_settings=EnvironmentSettings.new_instance()
+            .in_batch_mode().use_blink_planner().build())
 
 
 class PythonAPICompletenessTestCase(object):

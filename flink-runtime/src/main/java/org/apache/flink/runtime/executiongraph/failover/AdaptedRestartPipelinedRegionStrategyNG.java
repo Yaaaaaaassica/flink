@@ -107,6 +107,8 @@ public class AdaptedRestartPipelinedRegionStrategyNG extends FailoverStrategy {
 		final Set<ExecutionVertexVersion> vertexVersions = new HashSet<>(
 			executionVertexVersioner.recordVertexModifications(verticesToRestart).values());
 
+		executionGraph.incrementRestarts();
+
 		FutureUtils.assertNoException(
 			cancelTasks(verticesToRestart)
 				.thenComposeAsync(resetAndRescheduleTasks(globalModVersion, vertexVersions), executionGraph.getJobMasterMainThreadExecutor())
@@ -268,7 +270,7 @@ public class AdaptedRestartPipelinedRegionStrategyNG extends FailoverStrategy {
 	}
 
 	private ExecutionVertexID getExecutionVertexID(final ExecutionVertex vertex) {
-		return new ExecutionVertexID(vertex.getJobvertexId(), vertex.getParallelSubtaskIndex());
+		return vertex.getID();
 	}
 
 	private List<ExecutionVertex> sortVerticesTopologically(final Set<ExecutionVertex> vertices) {

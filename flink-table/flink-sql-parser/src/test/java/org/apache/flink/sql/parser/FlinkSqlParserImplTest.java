@@ -408,6 +408,25 @@ public class FlinkSqlParserImplTest extends SqlParserTest {
 	}
 
 	@Test
+	public void testCreateTableWithUserDefinedType() {
+		final String sql = "create table t(\n" +
+			"  a catalog1.db1.MyType1,\n" +
+			"  b db2.MyType2\n" +
+			") with (\n" +
+			"  'k1' = 'v1',\n" +
+			"  'k2' = 'v2'\n" +
+			")";
+		final String expected = "CREATE TABLE `T` (\n" +
+			"  `A`  `CATALOG1`.`DB1`.`MYTYPE1`,\n" +
+			"  `B`  `DB2`.`MYTYPE2`\n" +
+			") WITH (\n" +
+			"  'k1' = 'v1',\n" +
+			"  'k2' = 'v2'\n" +
+			")";
+		check(sql, expected);
+	}
+
+	@Test
 	public void testInvalidComputedColumn() {
 		checkFails("CREATE TABLE sls_stream (\n" +
 			"  a bigint, \n" +
@@ -420,7 +439,7 @@ public class FlinkSqlParserImplTest extends SqlParserTest {
 			")\n", "(?s).*Encountered \"\\(\" at line 4, column 14.\n" +
 			"Was expecting one of:\n" +
 			"    \"AS\" ...\n" +
-			"    \"ARRAY\" ...\n" +
+			"    \"STRING\" ...\n" +
 			".*");
 	}
 
@@ -650,7 +669,37 @@ public class FlinkSqlParserImplTest extends SqlParserTest {
 		check(sql, "DROP VIEW IF EXISTS `VIEW_NAME`");
 	}
 
-	/** Matcher that invokes the #validate() of the produced SqlNode. **/
+	// Override the test because our ROW field type default is nullable,
+	// which is different with Calcite.
+	@Override
+	public void testCastAsRowType() {
+		checkExp("cast(a as row(f0 int, f1 varchar))",
+			"CAST(`A` AS ROW(`F0` INTEGER, `F1` VARCHAR))");
+		checkExp("cast(a as row(f0 int not null, f1 varchar null))",
+			"CAST(`A` AS ROW(`F0` INTEGER NOT NULL, `F1` VARCHAR))");
+		checkExp("cast(a as row(f0 row(ff0 int not null, ff1 varchar null) null," +
+				" f1 timestamp not null))",
+			"CAST(`A` AS ROW(`F0` ROW(`FF0` INTEGER NOT NULL, `FF1` VARCHAR)," +
+				" `F1` TIMESTAMP NOT NULL))");
+		checkExp("cast(a as row(f0 bigint not null, f1 decimal null) array)",
+			"CAST(`A` AS ROW(`F0` BIGINT NOT NULL, `F1` DECIMAL) ARRAY)");
+		checkExp("cast(a as row(f0 varchar not null, f1 timestamp null) multiset)",
+			"CAST(`A` AS ROW(`F0` VARCHAR NOT NULL, `F1` TIMESTAMP) MULTISET)");
+	}
+
+	@Test
+	public void testCreateTableWithNakedTableName() {
+		String sql = "CREATE TABLE tbl1";
+		sql(sql).node(new ValidationMatcher());
+	}
+
+	@Test
+	public void testCreateViewWithEmptyFields() {
+		String sql = "CREATE VIEW v1 AS SELECT 1";
+		sql(sql).node(new ValidationMatcher());
+	}
+
+	/** Matcher that invokes the #validate() of the {@link ExtendedSqlNode} instance. **/
 	private static class ValidationMatcher extends BaseMatcher<SqlNode> {
 		private String expectedColumnSql;
 		private String failMsg;

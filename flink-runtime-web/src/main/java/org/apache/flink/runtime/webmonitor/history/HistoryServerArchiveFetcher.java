@@ -79,9 +79,9 @@ class HistoryServerArchiveFetcher {
 	private final JobArchiveFetcherTask fetcherTask;
 	private final long refreshIntervalMillis;
 
-	HistoryServerArchiveFetcher(long refreshIntervalMillis, List<HistoryServer.RefreshLocation> refreshDirs, File webDir, CountDownLatch numFinishedPolls) {
+	HistoryServerArchiveFetcher(long refreshIntervalMillis, List<HistoryServer.RefreshLocation> refreshDirs, File webDir, CountDownLatch numArchivedJobs) {
 		this.refreshIntervalMillis = refreshIntervalMillis;
-		this.fetcherTask = new JobArchiveFetcherTask(refreshDirs, webDir, numFinishedPolls);
+		this.fetcherTask = new JobArchiveFetcherTask(refreshDirs, webDir, numArchivedJobs);
 		if (LOG.isInfoEnabled()) {
 			for (HistoryServer.RefreshLocation refreshDir : refreshDirs) {
 				LOG.info("Monitoring directory {} for archived jobs.", refreshDir.getPath());
@@ -112,7 +112,7 @@ class HistoryServerArchiveFetcher {
 	static class JobArchiveFetcherTask extends TimerTask {
 
 		private final List<HistoryServer.RefreshLocation> refreshDirs;
-		private final CountDownLatch numFinishedPolls;
+		private final CountDownLatch numArchivedJobs;
 
 		/** Cache of all available jobs identified by their id. */
 		private final Set<String> cachedArchives;
@@ -123,9 +123,9 @@ class HistoryServerArchiveFetcher {
 
 		private static final String JSON_FILE_ENDING = ".json";
 
-		JobArchiveFetcherTask(List<HistoryServer.RefreshLocation> refreshDirs, File webDir, CountDownLatch numFinishedPolls) {
+		JobArchiveFetcherTask(List<HistoryServer.RefreshLocation> refreshDirs, File webDir, CountDownLatch numArchivedJobs) {
 			this.refreshDirs = checkNotNull(refreshDirs);
-			this.numFinishedPolls = numFinishedPolls;
+			this.numArchivedJobs = numArchivedJobs;
 			this.cachedArchives = new HashSet<>();
 			this.webDir = checkNotNull(webDir);
 			this.webJobDir = new File(webDir, "jobs");
@@ -152,7 +152,7 @@ class HistoryServerArchiveFetcher {
 					if (jobArchives == null) {
 						continue;
 					}
-					boolean updateOverview = false;
+					int numFetchedArchives = 0;
 					for (FileStatus jobArchive : jobArchives) {
 						Path jobArchivePath = jobArchive.getPath();
 						String jobID = jobArchivePath.getName();
@@ -163,7 +163,7 @@ class HistoryServerArchiveFetcher {
 								refreshDir, jobID, iae);
 							continue;
 						}
-						if (cachedArchives.add(jobID)) {
+						if (!cachedArchives.contains(jobID)) {
 							try {
 								for (ArchivedJson archive : FsJobArchivist.getArchivedJsons(jobArchive.getPath())) {
 									String path = archive.getPath();
@@ -176,6 +176,7 @@ class HistoryServerArchiveFetcher {
 										json = convertLegacyJobOverview(json);
 										target = new File(webOverviewDir, jobID + JSON_FILE_ENDING);
 									} else {
+										// this implicitly writes into webJobDir
 										target = new File(webDir, path + JSON_FILE_ENDING);
 									}
 
@@ -199,11 +200,10 @@ class HistoryServerArchiveFetcher {
 										fw.flush();
 									}
 								}
-								updateOverview = true;
+								cachedArchives.add(jobID);
+								numFetchedArchives++;
 							} catch (IOException e) {
 								LOG.error("Failure while fetching/processing job archive for job {}.", jobID, e);
-								// Make sure we attempt to fetch the archive again
-								cachedArchives.remove(jobID);
 								// Make sure we do not include this job in the overview
 								try {
 									Files.delete(new File(webOverviewDir, jobID + JSON_FILE_ENDING).toPath());
@@ -221,14 +221,16 @@ class HistoryServerArchiveFetcher {
 							}
 						}
 					}
-					if (updateOverview) {
+					if (numFetchedArchives > 0) {
 						updateJobOverview(webOverviewDir, webDir);
+						for (int x = 0; x < numFetchedArchives; x++) {
+							numArchivedJobs.countDown();
+						}
 					}
 				}
 			} catch (Exception e) {
 				LOG.error("Critical failure while fetching/processing job archives.", e);
 			}
-			numFinishedPolls.countDown();
 		}
 	}
 

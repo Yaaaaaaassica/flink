@@ -196,7 +196,7 @@ public class YarnConfigurationITCase extends YarnTestBase {
 					assertThat((int) (taskManagerInfo.getHardwareDescription().getSizeOfManagedMemory() >> 20), is(expectedManagedMemoryMB));
 				} finally {
 					restClient.shutdown(TIMEOUT);
-					clusterClient.shutdown();
+					clusterClient.close();
 				}
 
 				clusterDescriptor.killCluster(clusterId);
@@ -218,6 +218,6 @@ public class YarnConfigurationITCase extends YarnTestBase {
 
 	private static int calculateManagedMemorySizeMB(Configuration configuration) {
 		Configuration resourceManagerConfig = ActiveResourceManagerFactory.createActiveResourceManagerConfiguration(configuration);
-		return MemorySize.parse(resourceManagerConfig.getString(TaskManagerOptions.MANAGED_MEMORY_SIZE)).getMebiBytes();
+		return MemorySize.parse(resourceManagerConfig.getString(TaskManagerOptions.LEGACY_MANAGED_MEMORY_SIZE)).getMebiBytes();
 	}
 }

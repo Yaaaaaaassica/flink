@@ -27,7 +27,6 @@ import org.apache.flink.table.api.TableException;
 import org.apache.flink.table.api.TableSchema;
 import org.apache.flink.table.calcite.FlinkPlannerImpl;
 import org.apache.flink.table.calcite.FlinkTypeFactory;
-import org.apache.flink.table.calcite.FlinkTypeSystem;
 import org.apache.flink.table.catalog.CatalogTable;
 import org.apache.flink.table.catalog.CatalogTableImpl;
 import org.apache.flink.table.operations.CatalogSinkModifyOperation;
@@ -44,7 +43,6 @@ import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -101,38 +99,27 @@ public class SqlToOperationConverter {
 	 */
 	private Operation convertCreateTable(SqlCreateTable sqlCreateTable) {
 		// primary key and unique keys are not supported
-		if ((sqlCreateTable.getPrimaryKeyList() != null
-				&& sqlCreateTable.getPrimaryKeyList().size() > 0)
-			|| (sqlCreateTable.getUniqueKeysList() != null
-				&& sqlCreateTable.getUniqueKeysList().size() > 0)) {
+		if ((sqlCreateTable.getPrimaryKeyList().size() > 0)
+			|| (sqlCreateTable.getUniqueKeysList().size() > 0)) {
 			throw new SqlConversionException("Primary key and unique key are not supported yet.");
 		}
 
 		// set with properties
-		SqlNodeList propertyList = sqlCreateTable.getPropertyList();
 		Map<String, String> properties = new HashMap<>();
-		if (propertyList != null) {
-			propertyList.getList().forEach(p ->
-				properties.put(((SqlTableOption) p).getKeyString().toLowerCase(),
-					((SqlTableOption) p).getValueString()));
-		}
+		sqlCreateTable.getPropertyList().getList().forEach(p ->
+			properties.put(((SqlTableOption) p).getKeyString().toLowerCase(),
+				((SqlTableOption) p).getValueString()));
 
-		TableSchema tableSchema = createTableSchema(sqlCreateTable,
-			new FlinkTypeFactory(new FlinkTypeSystem())); // need to make type factory singleton ?
-		String tableComment = "";
-		if (sqlCreateTable.getComment() != null) {
-			tableComment = sqlCreateTable.getComment().getNlsString().getValue();
-		}
+		TableSchema tableSchema = createTableSchema(sqlCreateTable);
+		String tableComment = sqlCreateTable.getComment().map(comment ->
+			comment.getNlsString().getValue()).orElse(null);
 		// set partition key
-		List<String> partitionKeys = new ArrayList<>();
-		SqlNodeList partitionKey = sqlCreateTable.getPartitionKeyList();
-		if (partitionKey != null) {
-			partitionKeys = partitionKey
-				.getList()
-				.stream()
-				.map(p -> ((SqlIdentifier) p).getSimple())
-				.collect(Collectors.toList());
-		}
+		List<String> partitionKeys = sqlCreateTable.getPartitionKeyList()
+			.getList()
+			.stream()
+			.map(p -> ((SqlIdentifier) p).getSimple())
+			.collect(Collectors.toList());
+
 		CatalogTable catalogTable = new CatalogTableImpl(tableSchema,
 			partitionKeys,
 			properties,
@@ -159,7 +146,8 @@ public class SqlToOperationConverter {
 			targetTablePath,
 			(PlannerQueryOperation) SqlToOperationConverter.convert(flinkPlanner,
 				insert.getSource()),
-			insert.getStaticPartitionKVs());
+			insert.getStaticPartitionKVs(),
+			insert.isOverwrite());
 	}
 
 	//~ Tools ------------------------------------------------------------------
@@ -180,11 +168,9 @@ public class SqlToOperationConverter {
 	 * <p>The returned table schema contains columns (a:int, b:varchar, c:timestamp).
 	 *
 	 * @param sqlCreateTable sql create table node.
-	 * @param factory        FlinkTypeFactory instance.
 	 * @return TableSchema
 	 */
-	private TableSchema createTableSchema(SqlCreateTable sqlCreateTable,
-			FlinkTypeFactory factory) {
+	private TableSchema createTableSchema(SqlCreateTable sqlCreateTable) {
 		// setup table columns
 		SqlNodeList columnList = sqlCreateTable.getColumnList();
 		TableSchema physicalSchema = null;
@@ -194,8 +180,10 @@ public class SqlToOperationConverter {
 			.filter(n -> n instanceof SqlTableColumn).collect(Collectors.toList());
 		for (SqlNode node : physicalColumns) {
 			SqlTableColumn column = (SqlTableColumn) node;
-			final RelDataType relType = column.getType().deriveType(factory,
-				column.getType().getNullable());
+			final RelDataType relType = column.getType()
+				.deriveType(
+					flinkPlanner.getOrCreateSqlValidator(),
+					column.getType().getNullable());
 			builder.field(column.getName().getSimple(),
 				TypeConversions.fromLegacyInfoToDataType(FlinkTypeFactory.toTypeInfo(relType)));
 			physicalSchema = builder.build();

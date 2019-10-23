@@ -19,12 +19,11 @@ package org.apache.flink.streaming.api.environment;
 
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.api.common.JobExecutionResult;
+import org.apache.flink.client.ClientUtils;
+import org.apache.flink.client.FlinkPipelineTranslationUtil;
 import org.apache.flink.client.program.ContextEnvironment;
-import org.apache.flink.client.program.DetachedEnvironment;
+import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.streaming.api.graph.StreamGraph;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Special {@link StreamExecutionEnvironment} that will be used in cases where the CLI client or
@@ -33,8 +32,6 @@ import org.slf4j.LoggerFactory;
  */
 @PublicEvolving
 public class StreamContextEnvironment extends StreamExecutionEnvironment {
-
-	private static final Logger LOG = LoggerFactory.getLogger(StreamContextEnvironment.class);
 
 	private final ContextEnvironment ctx;
 
@@ -49,16 +46,23 @@ public class StreamContextEnvironment extends StreamExecutionEnvironment {
 	public JobExecutionResult execute(StreamGraph streamGraph) throws Exception {
 		transformations.clear();
 
-		// execute the programs
-		if (ctx instanceof DetachedEnvironment) {
-			LOG.warn("Job was executed in detached mode, the results will be available on completion.");
-			((DetachedEnvironment) ctx).setDetachedPlan(streamGraph);
-			return DetachedEnvironment.DetachedJobExecutionResult.INSTANCE;
-		} else {
-			return ctx
-				.getClient()
-				.run(streamGraph, ctx.getJars(), ctx.getClasspaths(), ctx.getUserCodeClassLoader(), ctx.getSavepointRestoreSettings())
-				.getJobExecutionResult();
-		}
+		JobGraph jobGraph = FlinkPipelineTranslationUtil.getJobGraph(
+				streamGraph,
+				ctx.getClient().getFlinkConfiguration(),
+				getParallelism());
+
+		ClientUtils.addJarFiles(jobGraph, ctx.getJars());
+		jobGraph.setClasspaths(ctx.getClasspaths());
+
+		// running from the CLI will override the savepoint restore settings
+		jobGraph.setSavepointRestoreSettings(ctx.getSavepointRestoreSettings());
+
+		JobExecutionResult jobExecutionResult =  ctx.getClient()
+			.submitJob(jobGraph, ctx.getUserCodeClassLoader())
+			.getJobExecutionResult();
+
+		ctx.setJobExecutionResult(jobExecutionResult);
+
+		return jobExecutionResult;
 	}
 }

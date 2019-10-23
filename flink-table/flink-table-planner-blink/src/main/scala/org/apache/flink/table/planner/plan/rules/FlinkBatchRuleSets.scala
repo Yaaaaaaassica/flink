@@ -130,9 +130,9 @@ object FlinkBatchRuleSets {
     */
   private val FILTER_RULES: RuleSet = RuleSets.ofList(
     // push a filter into a join
-    FlinkFilterJoinRule.FILTER_ON_JOIN,
+    FilterJoinRule.FILTER_ON_JOIN,
     // push filter into the children of a join
-    FlinkFilterJoinRule.JOIN,
+    FilterJoinRule.JOIN,
     // push filter through an aggregation
     FilterAggregateTransposeRule.INSTANCE,
     // push a filter past a project
@@ -221,9 +221,9 @@ object FlinkBatchRuleSets {
       FILTER_RULES.asScala
     ).asJava)
 
-  val JOIN_REORDER_PERPARE_RULES: RuleSet = RuleSets.ofList(
+  val JOIN_REORDER_PREPARE_RULES: RuleSet = RuleSets.ofList(
     // merge join to MultiJoin
-    FlinkJoinToMultiJoinRule.INSTANCE,
+    JoinToMultiJoinRule.INSTANCE,
     // merge project to MultiJoin
     ProjectMultiJoinMergeRule.INSTANCE,
     // merge filter to MultiJoin
@@ -352,7 +352,12 @@ object FlinkBatchRuleSets {
     // transpose calc past snapshot
     CalcSnapshotTransposeRule.INSTANCE,
     // merge calc after calc transpose
-    FlinkCalcMergeRule.INSTANCE
+    FlinkCalcMergeRule.INSTANCE,
+    // Rule that splits python ScalarFunctions from java/scala ScalarFunctions
+    PythonCalcSplitRule.SPLIT_CONDITION,
+    PythonCalcSplitRule.SPLIT_PROJECT,
+    PythonCalcSplitRule.PUSH_CONDITION,
+    PythonCalcSplitRule.REWRITE_PROJECT
   )
 
   /**
@@ -367,6 +372,7 @@ object FlinkBatchRuleSets {
     BatchExecValuesRule.INSTANCE,
     // calc
     BatchExecCalcRule.INSTANCE,
+    BatchExecPythonCalcRule.INSTANCE,
     // union
     BatchExecUnionRule.INSTANCE,
     // sort

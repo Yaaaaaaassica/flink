@@ -521,13 +521,13 @@ public class OneInputStreamTaskTest extends TestLogger {
 		TestingStreamOperator.numberRestoreCalls = 0;
 
 		testHarness.invoke();
-		testHarness.waitForTaskRunning(deadline.timeLeft().toMillis());
+		testHarness.waitForTaskRunning();
 
 		final OneInputStreamTask<String, String> streamTask = testHarness.getTask();
 
 		CheckpointMetaData checkpointMetaData = new CheckpointMetaData(checkpointId, checkpointTimestamp);
 
-		while (!streamTask.triggerCheckpoint(checkpointMetaData, CheckpointOptions.forCheckpointWithDefaultLocation(), false)) {}
+		streamTask.triggerCheckpointAsync(checkpointMetaData, CheckpointOptions.forCheckpointWithDefaultLocation(), false).get();
 
 		// since no state was set, there shouldn't be restore calls
 		assertEquals(0, TestingStreamOperator.numberRestoreCalls);

@@ -26,12 +26,13 @@ import org.apache.flink.api.common.io.OutputFormat;
 import org.apache.flink.api.common.operators.ResourceSpec;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.api.dag.Pipeline;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.api.java.typeutils.MissingTypeInfo;
-import org.apache.flink.optimizer.plan.StreamingPlan;
 import org.apache.flink.runtime.jobgraph.JobGraph;
+import org.apache.flink.runtime.jobgraph.SavepointRestoreSettings;
 import org.apache.flink.runtime.jobgraph.ScheduleMode;
 import org.apache.flink.runtime.jobgraph.tasks.AbstractInvokable;
 import org.apache.flink.runtime.state.StateBackend;
@@ -47,7 +48,6 @@ import org.apache.flink.streaming.runtime.tasks.OneInputStreamTask;
 import org.apache.flink.streaming.runtime.tasks.SourceStreamTask;
 import org.apache.flink.streaming.runtime.tasks.StreamIterationHead;
 import org.apache.flink.streaming.runtime.tasks.StreamIterationTail;
-import org.apache.flink.streaming.runtime.tasks.TwoInputSelectableStreamTask;
 import org.apache.flink.streaming.runtime.tasks.TwoInputStreamTask;
 import org.apache.flink.util.OutputTag;
 
@@ -56,10 +56,6 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -76,7 +72,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  *
  */
 @Internal
-public class StreamGraph extends StreamingPlan {
+public class StreamGraph implements Pipeline {
 
 	private static final Logger LOG = LoggerFactory.getLogger(StreamGraph.class);
 
@@ -88,6 +84,7 @@ public class StreamGraph extends StreamingPlan {
 
 	private final ExecutionConfig executionConfig;
 	private final CheckpointConfig checkpointConfig;
+	private SavepointRestoreSettings savepointRestoreSettings = SavepointRestoreSettings.none();
 
 	private ScheduleMode scheduleMode;
 
@@ -115,9 +112,10 @@ public class StreamGraph extends StreamingPlan {
 	private StateBackend stateBackend;
 	private Set<Tuple2<StreamNode, StreamNode>> iterationSourceSinkPairs;
 
-	public StreamGraph(ExecutionConfig executionConfig, CheckpointConfig checkpointConfig) {
+	public StreamGraph(ExecutionConfig executionConfig, CheckpointConfig checkpointConfig, SavepointRestoreSettings savepointRestoreSettings) {
 		this.executionConfig = checkNotNull(executionConfig);
 		this.checkpointConfig = checkNotNull(checkpointConfig);
+		this.savepointRestoreSettings = checkNotNull(savepointRestoreSettings);
 
 		// create an empty new stream graph.
 		clear();
@@ -144,6 +142,14 @@ public class StreamGraph extends StreamingPlan {
 
 	public CheckpointConfig getCheckpointConfig() {
 		return checkpointConfig;
+	}
+
+	public void setSavepointRestoreSettings(SavepointRestoreSettings savepointRestoreSettings) {
+		this.savepointRestoreSettings = savepointRestoreSettings;
+	}
+
+	public SavepointRestoreSettings getSavepointRestoreSettings() {
+		return savepointRestoreSettings;
 	}
 
 	public String getJobName() {
@@ -283,9 +289,7 @@ public class StreamGraph extends StreamingPlan {
 			TypeInformation<OUT> outTypeInfo,
 			String operatorName) {
 
-		Class<? extends AbstractInvokable> vertexClass =
-			taskOperatorFactory.isOperatorSelectiveReading(Thread.currentThread().getContextClassLoader()) ?
-				TwoInputSelectableStreamTask.class : TwoInputStreamTask.class;
+		Class<? extends AbstractInvokable> vertexClass = TwoInputStreamTask.class;
 
 		addNode(vertexID, slotSharingGroup, coLocationGroup, vertexClass, taskOperatorFactory, operatorName);
 
@@ -722,35 +726,25 @@ public class StreamGraph extends StreamingPlan {
 	}
 
 	/**
-	 * Gets the assembled {@link JobGraph} with a given job id.
+	 * Gets the assembled {@link JobGraph} with a random {@link JobID}.
 	 */
-	@Override
+	public JobGraph getJobGraph() {
+		return getJobGraph(null);
+	}
+
+	/**
+	 * Gets the assembled {@link JobGraph} with a specified {@link JobID}.
+	 */
 	public JobGraph getJobGraph(@Nullable JobID jobID) {
 		return StreamingJobGraphGenerator.createJobGraph(this, jobID);
 	}
 
-	@Override
 	public String getStreamingPlanAsJSON() {
 		try {
 			return new JSONGenerator(this).getJSON();
 		}
 		catch (Exception e) {
 			throw new RuntimeException("JSON plan creation failed", e);
-		}
-	}
-
-	@Override
-	public void dumpStreamingPlanAsJSON(File file) throws IOException {
-		PrintWriter pw = null;
-		try {
-			pw = new PrintWriter(new FileOutputStream(file), false);
-			pw.write(getStreamingPlanAsJSON());
-			pw.flush();
-
-		} finally {
-			if (pw != null) {
-				pw.close();
-			}
 		}
 	}
 }

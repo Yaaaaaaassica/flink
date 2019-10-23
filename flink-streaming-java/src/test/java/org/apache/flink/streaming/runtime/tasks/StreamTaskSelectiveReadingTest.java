@@ -184,7 +184,7 @@ public class StreamTaskSelectiveReadingTest {
 	// Utilities
 	// ------------------------------------------------------------------------
 
-	private static class TestSelectiveReadingTask<IN1, IN2, OUT> extends TwoInputSelectableStreamTask<IN1, IN2, OUT> {
+	private static class TestSelectiveReadingTask<IN1, IN2, OUT> extends TwoInputStreamTask<IN1, IN2, OUT> {
 
 		private volatile boolean started;
 
@@ -194,14 +194,14 @@ public class StreamTaskSelectiveReadingTest {
 		}
 
 		@Override
-		protected void performDefaultAction(DefaultActionContext context) throws Exception {
+		protected void processInput(DefaultActionContext context) throws Exception {
 			if (!started) {
 				synchronized (this) {
 					this.wait();
 				}
 			}
 
-			super.performDefaultAction(context);
+			super.processInput(context);
 		}
 
 		public void startProcessing() {

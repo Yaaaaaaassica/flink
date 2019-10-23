@@ -19,7 +19,7 @@
 package org.apache.flink.sql.parser.ddl;
 
 import org.apache.flink.sql.parser.ExtendedSqlNode;
-import org.apache.flink.sql.parser.error.SqlParseException;
+import org.apache.flink.sql.parser.error.SqlValidateException;
 
 import org.apache.calcite.sql.SqlBasicCall;
 import org.apache.calcite.sql.SqlCall;
@@ -37,9 +37,12 @@ import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.pretty.SqlPrettyWriter;
 import org.apache.calcite.util.ImmutableNullableList;
 
+import javax.annotation.Nullable;
+
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static java.util.Objects.requireNonNull;
@@ -63,6 +66,7 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 
 	private final SqlNodeList partitionKeyList;
 
+	@Nullable
 	private final SqlCharStringLiteral comment;
 
 	public SqlCreateTable(
@@ -75,12 +79,12 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 			SqlNodeList partitionKeyList,
 			SqlCharStringLiteral comment) {
 		super(OPERATOR, pos, false, false);
-		this.tableName = requireNonNull(tableName, "Table name is missing");
-		this.columnList = requireNonNull(columnList, "Column list should not be null");
-		this.primaryKeyList = primaryKeyList;
-		this.uniqueKeysList = uniqueKeysList;
-		this.propertyList = propertyList;
-		this.partitionKeyList = partitionKeyList;
+		this.tableName = requireNonNull(tableName, "tableName should not be null");
+		this.columnList = requireNonNull(columnList, "columnList should not be null");
+		this.primaryKeyList = requireNonNull(primaryKeyList, "primayKeyList should not be null");
+		this.uniqueKeysList = requireNonNull(uniqueKeysList, "uniqueKeysList should not be null");
+		this.propertyList = requireNonNull(propertyList, "propertyList should not be null");
+		this.partitionKeyList = requireNonNull(partitionKeyList, "partitionKeyList should not be null");
 		this.comment = comment;
 	}
 
@@ -119,76 +123,62 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 		return uniqueKeysList;
 	}
 
-	public SqlCharStringLiteral getComment() {
-		return comment;
+	public Optional<SqlCharStringLiteral> getComment() {
+		return Optional.ofNullable(comment);
 	}
 
 	public boolean isIfNotExists() {
 		return ifNotExists;
 	}
 
-	public void validate() throws SqlParseException {
+	public void validate() throws SqlValidateException {
 		Set<String> columnNames = new HashSet<>();
-		if (columnList != null) {
-			for (SqlNode column : columnList) {
-				String columnName = null;
-				if (column instanceof SqlTableColumn) {
-					SqlTableColumn tableColumn = (SqlTableColumn) column;
-					columnName = tableColumn.getName().getSimple();
-					String typeName = tableColumn.getType().getTypeName().getSimple();
-					if (SqlColumnType.getType(typeName).isUnsupported()) {
-						throw new SqlParseException(
-							column.getParserPosition(),
-							"Not support type [" + typeName + "], at " + column.getParserPosition());
-					}
-				} else if (column instanceof SqlBasicCall) {
-					SqlBasicCall tableColumn = (SqlBasicCall) column;
-					columnName = tableColumn.getOperands()[1].toString();
-				}
+		for (SqlNode column : columnList) {
+			String columnName = null;
+			if (column instanceof SqlTableColumn) {
+				SqlTableColumn tableColumn = (SqlTableColumn) column;
+				columnName = tableColumn.getName().getSimple();
+			} else if (column instanceof SqlBasicCall) {
+				SqlBasicCall tableColumn = (SqlBasicCall) column;
+				columnName = tableColumn.getOperands()[1].toString();
+			}
 
-				if (!columnNames.add(columnName)) {
-					throw new SqlParseException(
-						column.getParserPosition(),
-						"Duplicate column name [" + columnName + "], at " +
-							column.getParserPosition());
+			if (!columnNames.add(columnName)) {
+				throw new SqlValidateException(
+					column.getParserPosition(),
+					"Duplicate column name [" + columnName + "], at " +
+						column.getParserPosition());
+			}
+		}
+
+		for (SqlNode primaryKeyNode : this.primaryKeyList) {
+			String primaryKey = ((SqlIdentifier) primaryKeyNode).getSimple();
+			if (!columnNames.contains(primaryKey)) {
+				throw new SqlValidateException(
+					primaryKeyNode.getParserPosition(),
+					"Primary key [" + primaryKey + "] not defined in columns, at " +
+						primaryKeyNode.getParserPosition());
+			}
+		}
+
+		for (SqlNodeList uniqueKeys: this.uniqueKeysList) {
+			for (SqlNode uniqueKeyNode : uniqueKeys) {
+				String uniqueKey = ((SqlIdentifier) uniqueKeyNode).getSimple();
+				if (!columnNames.contains(uniqueKey)) {
+					throw new SqlValidateException(
+							uniqueKeyNode.getParserPosition(),
+							"Unique key [" + uniqueKey + "] not defined in columns, at " + uniqueKeyNode.getParserPosition());
 				}
 			}
 		}
 
-		if (this.primaryKeyList != null) {
-			for (SqlNode primaryKeyNode : this.primaryKeyList) {
-				String primaryKey = ((SqlIdentifier) primaryKeyNode).getSimple();
-				if (!columnNames.contains(primaryKey)) {
-					throw new SqlParseException(
-						primaryKeyNode.getParserPosition(),
-						"Primary key [" + primaryKey + "] not defined in columns, at " +
-							primaryKeyNode.getParserPosition());
-				}
-			}
-		}
-
-		if (this.uniqueKeysList != null) {
-			for (SqlNodeList uniqueKeys: this.uniqueKeysList) {
-				for (SqlNode uniqueKeyNode : uniqueKeys) {
-					String uniqueKey = ((SqlIdentifier) uniqueKeyNode).getSimple();
-					if (!columnNames.contains(uniqueKey)) {
-						throw new SqlParseException(
-								uniqueKeyNode.getParserPosition(),
-								"Unique key [" + uniqueKey + "] not defined in columns, at " + uniqueKeyNode.getParserPosition());
-					}
-				}
-			}
-		}
-
-		if (this.partitionKeyList != null) {
-			for (SqlNode partitionKeyNode : this.partitionKeyList.getList()) {
-				String partitionKey = ((SqlIdentifier) partitionKeyNode).getSimple();
-				if (!columnNames.contains(partitionKey)) {
-					throw new SqlParseException(
-						partitionKeyNode.getParserPosition(),
-						"Partition column [" + partitionKey + "] not defined in columns, at "
-							+ partitionKeyNode.getParserPosition());
-				}
+		for (SqlNode partitionKeyNode : this.partitionKeyList.getList()) {
+			String partitionKey = ((SqlIdentifier) partitionKeyNode).getSimple();
+			if (!columnNames.contains(partitionKey)) {
+				throw new SqlValidateException(
+					partitionKeyNode.getParserPosition(),
+					"Partition column [" + partitionKey + "] not defined in columns, at "
+						+ partitionKeyNode.getParserPosition());
 			}
 		}
 
@@ -241,9 +231,9 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 
 	@Override
 	public void unparse(
-		SqlWriter writer,
-		int leftPrec,
-		int rightPrec) {
+			SqlWriter writer,
+			int leftPrec,
+			int rightPrec) {
 		writer.keyword("CREATE TABLE");
 		tableName.unparse(writer, leftPrec, rightPrec);
 		SqlWriter.Frame frame = writer.startList(SqlWriter.FrameTypeEnum.create("sds"), "(", ")");
@@ -260,14 +250,14 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 				column.unparse(writer, leftPrec, rightPrec);
 			}
 		}
-		if (primaryKeyList != null && primaryKeyList.size() > 0) {
+		if (primaryKeyList.size() > 0) {
 			printIndent(writer);
 			writer.keyword("PRIMARY KEY");
 			SqlWriter.Frame keyFrame = writer.startList("(", ")");
 			primaryKeyList.unparse(writer, leftPrec, rightPrec);
 			writer.endList(keyFrame);
 		}
-		if (uniqueKeysList != null && uniqueKeysList.size() > 0) {
+		if (uniqueKeysList.size() > 0) {
 			printIndent(writer);
 			for (SqlNodeList uniqueKeyList : uniqueKeysList) {
 				writer.keyword("UNIQUE");
@@ -286,7 +276,7 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 			comment.unparse(writer, leftPrec, rightPrec);
 		}
 
-		if (this.partitionKeyList != null && this.partitionKeyList.size() > 0) {
+		if (this.partitionKeyList.size() > 0) {
 			writer.newlineAndIndent();
 			writer.keyword("PARTITIONED BY");
 			SqlWriter.Frame withFrame = writer.startList("(", ")");
@@ -295,7 +285,7 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 			writer.newlineAndIndent();
 		}
 
-		if (propertyList != null) {
+		if (this.propertyList.size() > 0) {
 			writer.keyword("WITH");
 			SqlWriter.Frame withFrame = writer.startList("(", ")");
 			for (SqlNode property : propertyList) {
@@ -318,7 +308,7 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 	 */
 	public static class TableCreationContext {
 		public List<SqlNode> columnList = new ArrayList<>();
-		public SqlNodeList primaryKeyList;
+		public SqlNodeList primaryKeyList = SqlNodeList.EMPTY;
 		public List<SqlNodeList> uniqueKeysList = new ArrayList<>();
 	}
 
