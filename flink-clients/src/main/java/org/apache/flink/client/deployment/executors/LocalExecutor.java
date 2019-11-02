@@ -16,81 +16,51 @@
  * limitations under the License.
  */
 
-package org.apache.flink.client.deployment.executors;
+package org.apache.flink.client;
 
-import org.apache.flink.annotation.Internal;
-import org.apache.flink.api.common.JobID;
+import org.apache.flink.api.common.JobExecutionResult;
 import org.apache.flink.api.common.Plan;
+import org.apache.flink.api.common.PlanExecutor;
 import org.apache.flink.api.dag.Pipeline;
-import org.apache.flink.client.FlinkPipelineTranslationUtil;
-import org.apache.flink.client.deployment.ClusterClientJobClientAdapter;
-import org.apache.flink.client.program.MiniClusterClient;
 import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.configuration.DeploymentOptions;
 import org.apache.flink.configuration.RestOptions;
 import org.apache.flink.configuration.TaskManagerOptions;
-import org.apache.flink.core.execution.JobClient;
-import org.apache.flink.core.execution.PipelineExecutor;
 import org.apache.flink.runtime.jobgraph.JobGraph;
+import org.apache.flink.runtime.minicluster.JobExecutorService;
 import org.apache.flink.runtime.minicluster.MiniCluster;
 import org.apache.flink.runtime.minicluster.MiniClusterConfiguration;
 import org.apache.flink.runtime.minicluster.RpcServiceSharing;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
+import java.net.URL;
+import java.util.List;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
-import static org.apache.flink.util.Preconditions.checkState;
 
 /**
- * An {@link PipelineExecutor} for executing a {@link Pipeline} locally.
+ * A PlanExecutor that runs Flink programs on a local embedded Flink runtime instance.
+ *
+ * <p>By simply calling the {@link #executePlan(Pipeline, List, List)} method,
+ * this executor still start up and shut down again immediately after the program finished.</p>
+ *
+ * <p>To use this executor to execute many dataflow programs that constitute one job together,
+ * then this executor needs to be explicitly started, to keep running across several executions.</p>
  */
-@Internal
-public class LocalExecutor implements PipelineExecutor {
+public class LocalExecutor extends PlanExecutor {
 
-	public static final String NAME = "local";
+	/** Custom user configuration for the execution. */
+	private final Configuration baseConfiguration;
 
-	@Override
-	public CompletableFuture<JobClient> execute(Pipeline pipeline, Configuration configuration) throws Exception {
-		checkNotNull(pipeline);
-		checkNotNull(configuration);
-
-		// we only support attached execution with the local executor.
-		checkState(configuration.getBoolean(DeploymentOptions.ATTACHED));
-
-		final JobGraph jobGraph = getJobGraph(pipeline, configuration);
-		final MiniCluster miniCluster = startMiniCluster(jobGraph, configuration);
-		final MiniClusterClient clusterClient = new MiniClusterClient(configuration, miniCluster);
-
-		CompletableFuture<JobID> jobIdFuture = clusterClient.submitJob(jobGraph);
-
-		jobIdFuture
-				.thenCompose(clusterClient::requestJobResult)
-				.thenAccept((jobResult) -> clusterClient.shutDownCluster());
-
-		return jobIdFuture.thenApply(jobID ->
-				new ClusterClientJobClientAdapter<>(() -> clusterClient, jobID));
+	public LocalExecutor() {
+		this(new Configuration());
 	}
 
-	private JobGraph getJobGraph(Pipeline pipeline, Configuration configuration) {
-		// This is a quirk in how LocalEnvironment used to work. It sets the default parallelism
-		// to <num taskmanagers> * <num task slots>. Might be questionable but we keep the behaviour
-		// for now.
-		if (pipeline instanceof Plan) {
-			Plan plan = (Plan) pipeline;
-			final int slotsPerTaskManager = configuration.getInteger(
-					TaskManagerOptions.NUM_TASK_SLOTS, plan.getMaximumParallelism());
-			final int numTaskManagers = configuration.getInteger(
-					ConfigConstants.LOCAL_NUMBER_TASK_MANAGER, 1);
-
-			plan.setDefaultParallelism(slotsPerTaskManager * numTaskManagers);
-		}
-
-		return FlinkPipelineTranslationUtil.getJobGraph(pipeline, configuration, 1);
+	public LocalExecutor(Configuration conf) {
+		this.baseConfiguration = checkNotNull(conf);
 	}
 
-	private MiniCluster startMiniCluster(final JobGraph jobGraph, final Configuration configuration) throws Exception {
+	private JobExecutorService createJobExecutorService(
+			JobGraph jobGraph, Configuration configuration) throws Exception {
 		if (!configuration.contains(RestOptions.BIND_PORT)) {
 			configuration.setString(RestOptions.BIND_PORT, "0");
 		}
@@ -107,11 +77,11 @@ public class LocalExecutor implements PipelineExecutor {
 
 		final MiniClusterConfiguration miniClusterConfiguration =
 				new MiniClusterConfiguration.Builder()
-						.setConfiguration(configuration)
-						.setNumTaskManagers(numTaskManagers)
-						.setRpcServiceSharing(RpcServiceSharing.SHARED)
-						.setNumSlotsPerTaskManager(numSlotsPerTaskManager)
-						.build();
+				.setConfiguration(configuration)
+				.setNumTaskManagers(numTaskManagers)
+				.setRpcServiceSharing(RpcServiceSharing.SHARED)
+				.setNumSlotsPerTaskManager(numSlotsPerTaskManager)
+				.build();
 
 		final MiniCluster miniCluster = new MiniCluster(miniClusterConfiguration);
 		miniCluster.start();
@@ -121,13 +91,36 @@ public class LocalExecutor implements PipelineExecutor {
 		return miniCluster;
 	}
 
-	private void shutdownMiniCluster(final MiniCluster miniCluster) {
-		try {
-			if (miniCluster != null) {
-				miniCluster.close();
-			}
-		} catch (Exception e) {
-			throw new CompletionException(e);
+	@Override
+	public JobExecutionResult executePlan(
+			Pipeline pipeline,
+			List<URL> jarFiles,
+			List<URL> globalClasspaths) throws Exception {
+		checkNotNull(pipeline);
+
+		// This is a quirk in how LocalEnvironment used to work. It sets the default parallelism
+		// to <num taskmanagers> * <num task slots>. Might be questionable but we keep the behaviour
+		// for now.
+		if (pipeline instanceof Plan) {
+			Plan plan = (Plan) pipeline;
+			final int slotsPerTaskManager = baseConfiguration.getInteger(
+					TaskManagerOptions.NUM_TASK_SLOTS, plan.getMaximumParallelism());
+			final int numTaskManagers = baseConfiguration.getInteger(
+					ConfigConstants.LOCAL_NUMBER_TASK_MANAGER, 1);
+
+			plan.setDefaultParallelism(slotsPerTaskManager * numTaskManagers);
+		}
+
+		JobGraph jobGraph = FlinkPipelineTranslationUtil.getJobGraph(pipeline,
+				baseConfiguration,
+				1);
+
+		jobGraph.setAllowQueuedScheduling(true);
+
+		// 这里是 try withh resource close
+		try (final JobExecutorService executorService = createJobExecutorService(jobGraph,
+				baseConfiguration)) {
+			return executorService.executeJobBlocking(jobGraph);
 		}
 	}
 }
