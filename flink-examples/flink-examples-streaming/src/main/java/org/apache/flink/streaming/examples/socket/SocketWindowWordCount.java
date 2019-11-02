@@ -21,6 +21,8 @@ package org.apache.flink.streaming.examples.socket;
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.RestOptions;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.windowing.time.Time;
@@ -59,7 +61,9 @@ public class SocketWindowWordCount {
 		}
 
 		// get the execution environment
-		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+		Configuration conf = new Configuration();
+		conf.setInteger(RestOptions.PORT,8080);
+		final StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(conf);
 
 		// get input data by connecting to the socket
 		DataStream<String> text = env.socketTextStream(hostname, port, "\n");
@@ -77,7 +81,7 @@ public class SocketWindowWordCount {
 				})
 
 				.keyBy("word")
-				.timeWindow(Time.seconds(5))
+				//.timeWindow(Time.seconds(5))
 
 				.reduce(new ReduceFunction<WordWithCount>() {
 					@Override

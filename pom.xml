@@ -28,7 +28,7 @@ under the License.
 
 	<groupId>org.apache.flink</groupId>
 	<artifactId>flink-parent</artifactId>
-	<version>1.10-SNAPSHOT</version>
+	<version>20191101</version>
 
 	<name>flink</name>
 	<packaging>pom</packaging>
@@ -69,9 +69,6 @@ under the License.
 		<module>flink-clients</module>
 		<module>flink-container</module>
 		<module>flink-queryable-state</module>
-		<module>flink-tests</module>
-		<module>flink-end-to-end-tests</module>
-		<module>flink-test-utils-parent</module>
 		<module>flink-state-backends</module>
 		<module>flink-libraries</module>
 		<module>flink-table</module>
@@ -81,13 +78,24 @@ under the License.
 		<module>flink-mesos</module>
 		<module>flink-metrics</module>
 		<module>flink-yarn</module>
-		<module>flink-yarn-tests</module>
-		<module>flink-fs-tests</module>
-		<module>flink-docs</module>
 		<module>flink-python</module>
 		<module>flink-ml-parent</module>
 	</modules>
+	<repositories>
+		<repository>
+			<id>alimaven</id>
+			<name>aliyun maven</name>
+			<url>http://maven.aliyun.com/nexus/content/groups/public/</url>
+			<releases>
+				<enabled>true</enabled>
+			</releases>
+			<snapshots>
+				<enabled>true</enabled>
+				<updatePolicy>never</updatePolicy>
+			</snapshots>
 
+		</repository>
+	</repositories>
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -154,7 +162,7 @@ under the License.
 		<dependency>
 			<groupId>org.apache.flink</groupId>
 			<artifactId>force-shading</artifactId>
-			<version>1.10-SNAPSHOT</version>
+			<version>20191101</version>
 		</dependency>
 
 		<!-- Root dependencies for all projects -->
@@ -626,12 +634,7 @@ under the License.
 				<scope>test</scope>
 			</dependency>
 
-			<dependency>
-				<groupId>org.apache.flink</groupId>
-				<artifactId>flink-test-utils-junit</artifactId>
-				<version>${project.version}</version>
-				<scope>test</scope>
-			</dependency>
+
 		</dependencies>
 	</dependencyManagement>
 
@@ -1201,6 +1204,12 @@ under the License.
 	</profiles>
 
 	<build>
+
+		<testResources>
+			<testResource>
+				<directory>src/main/tests</directory>
+			</testResource>
+		</testResources>
 		<plugins>
 			<!--
 			We need to include this here because some of our modules have transitive dependencies
