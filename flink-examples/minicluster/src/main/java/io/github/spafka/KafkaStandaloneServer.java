@@ -25,7 +25,7 @@ public class KafkaStandaloneServer {
 
 		new Thread(() -> {
 			try {
-				FileUtils.deleteDirectory(new File("/tmp/zookeeper"));
+				FileUtils.deleteDirectory(new File("/tmp"));
 
 				QuorumPeerConfig config = new QuorumPeerConfig();
 				InputStream is = ZkServer.class.getResourceAsStream("/zookeeper.properties");
@@ -45,7 +45,7 @@ public class KafkaStandaloneServer {
 		new Thread(() -> {
 
 			try {
-				FileUtils.deleteDirectory(new File("/tmp/kafka/data"));
+				FileUtils.deleteDirectory(new File("/data"));
 
 
 				InputStream is = KafkaStandaloneServer.class.getResourceAsStream("/server.properties");
