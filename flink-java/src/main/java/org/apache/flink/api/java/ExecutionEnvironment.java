@@ -1224,7 +1224,10 @@ public class ExecutionEnvironment {
 	 * @return A local execution environment with the specified parallelism.
 	 */
 	public static LocalEnvironment createLocalEnvironment(int parallelism) {
-		return createLocalEnvironment(new Configuration(), parallelism);
+		Configuration configuration = new Configuration();
+
+		configuration.setInteger(RestOptions.PORT,8080);
+		return createLocalEnvironment(configuration, parallelism);
 	}
 
 	/**
