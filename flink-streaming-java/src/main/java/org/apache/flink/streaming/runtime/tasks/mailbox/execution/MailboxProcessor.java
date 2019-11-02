@@ -208,6 +208,8 @@ public class MailboxProcessor {
 		// action becomes available again.
 		while (isDefaultActionUnavailable() && isMailboxLoopRunning()) {
 			Runnable letter = mailbox.takeMail(MIN_PRIORITY);
+
+			LOG.debug("mailbox new thread {}",letter);
 			letter.run();
 		}
 
