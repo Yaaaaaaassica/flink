@@ -66,6 +66,7 @@ public class SocketWindowWordCount {
 		final StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(conf);
 
 		// get input data by connecting to the socket
+		// sourceFuunction fei paralSourceFunction 并行度为1
 		DataStream<String> text = env.socketTextStream(hostname, port, "\n");
 
 		// parse the data, group it, window it, and aggregate the counts
