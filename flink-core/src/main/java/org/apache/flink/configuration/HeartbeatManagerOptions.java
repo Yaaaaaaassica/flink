@@ -29,18 +29,19 @@ import static org.apache.flink.configuration.ConfigOptions.key;
 @PublicEvolving
 public class HeartbeatManagerOptions {
 
+	// fixme 本地测试超时时间增加10000倍
 	/** Time interval for requesting heartbeat from sender side. */
 	@Documentation.Section(Documentation.Sections.EXPERT_FAULT_TOLERANCE)
 	public static final ConfigOption<Long> HEARTBEAT_INTERVAL =
 			key("heartbeat.interval")
-			.defaultValue(10000L)
+			.defaultValue(100000000L)
 			.withDescription("Time interval for requesting heartbeat from sender side.");
 
 	/** Timeout for requesting and receiving heartbeat for both sender and receiver sides. */
 	@Documentation.Section(Documentation.Sections.EXPERT_FAULT_TOLERANCE)
 	public static final ConfigOption<Long> HEARTBEAT_TIMEOUT =
 			key("heartbeat.timeout")
-			.defaultValue(50000L)
+			.defaultValue(500000000L)
 			.withDescription("Timeout for requesting and receiving heartbeat for both sender and receiver sides.");
 
 	// ------------------------------------------------------------------------
