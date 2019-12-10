@@ -19,6 +19,7 @@
 
 package org.apache.flink.runtime.scheduler;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.blob.BlobWriter;
@@ -42,6 +43,7 @@ import java.util.concurrent.ScheduledExecutorService;
  *
  * @see ExecutionGraph#scheduleForExecution()
  */
+@Slf4j
 public class LegacyScheduler extends SchedulerBase {
 
 	public LegacyScheduler(
@@ -91,6 +93,8 @@ public class LegacyScheduler extends SchedulerBase {
 	@Override
 	protected void startSchedulingInternal() {
 		final ExecutionGraph executionGraph = getExecutionGraph();
+
+		log.warn("ExecutionGraph========== {}",executionGraph);
 		try {
 			executionGraph.scheduleForExecution();
 		}

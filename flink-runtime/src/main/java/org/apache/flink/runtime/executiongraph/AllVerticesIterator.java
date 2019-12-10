@@ -18,9 +18,11 @@
 
 package org.apache.flink.runtime.executiongraph;
 
+import lombok.extern.slf4j.Slf4j;
+
 import java.util.Iterator;
 import java.util.NoSuchElementException;
-
+@Slf4j
 class AllVerticesIterator implements Iterator<ExecutionVertex> {
 
 	private final Iterator<ExecutionJobVertex> jobVertices;
@@ -58,7 +60,10 @@ class AllVerticesIterator implements Iterator<ExecutionVertex> {
 	@Override
 	public ExecutionVertex next() {
 		if (hasNext()) {
-			return currVertices[currPos++];
+			ExecutionVertex currVertex = currVertices[currPos++];
+
+
+			return currVertex;
 		} else {
 			throw new NoSuchElementException();
 		}
