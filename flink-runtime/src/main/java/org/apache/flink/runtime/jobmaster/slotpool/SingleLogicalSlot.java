@@ -204,4 +204,15 @@ public class SingleLogicalSlot implements LogicalSlot, PhysicalSlot.Payload {
 		RELEASING,
 		RELEASED
 	}
+
+
+	@Override
+	public String toString() {
+		return "SingleLogicalSlot{" +
+			"slotRequestId=" + slotRequestId +
+			", slotContext=" + slotContext +
+			", slotSharingGroupId=" + slotSharingGroupId +
+			", locality=" + locality +
+			'}';
+	}
 }
