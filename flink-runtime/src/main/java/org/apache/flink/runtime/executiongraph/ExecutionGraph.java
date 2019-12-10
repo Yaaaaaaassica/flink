@@ -828,6 +828,8 @@ public class ExecutionGraph implements AccessExecutionGraph {
 				}
 			}
 
+
+			// scheduleForExecution:979
 			this.verticesInCreationOrder.add(ejv);
 			this.numVerticesTotal += ejv.getParallelism();
 			newExecJobVertices.add(ejv);
