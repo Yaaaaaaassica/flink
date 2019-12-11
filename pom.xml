@@ -152,6 +152,14 @@ under the License.
 	<dependencies>
 
 		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<version>1.16.22</version>
+			<scope>provided</scope>
+		</dependency>
+
+
+		<dependency>
 			<groupId>com.alibaba.blink</groupId>
 			<artifactId>force-shading</artifactId>
 			<version>1.5.1</version>

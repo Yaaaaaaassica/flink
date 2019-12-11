@@ -241,7 +241,7 @@ public class NetworkEnvironment {
 				throw new IOException(t.getMessage(), t);
 			}
 		}
-
+        // 事件分发器在io上注册
 		taskEventDispatcher.registerPartition(partition.getPartitionId());
 	}
 

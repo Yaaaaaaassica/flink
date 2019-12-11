@@ -18,6 +18,7 @@
 
 package org.apache.flink.runtime.io.network.partition.consumer;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.event.TaskEvent;
@@ -54,6 +55,7 @@ import static org.apache.flink.util.Preconditions.checkState;
 /**
  * An input channel, which requests a remote partition queue.
  */
+@Slf4j
 public class RemoteInputChannel extends InputChannel implements BufferRecycler, BufferListener {
 
 	/** ID to distinguish this channel from other channels sharing the same TCP connection. */
@@ -135,6 +137,8 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 		inputGate.runAsync(new Runnable() {
 			@Override
 			public void run() {
+
+
 				createPartitionRequestClient();
 			}
 		});

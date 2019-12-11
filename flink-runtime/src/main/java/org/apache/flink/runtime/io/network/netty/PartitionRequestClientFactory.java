@@ -18,6 +18,7 @@
 
 package org.apache.flink.runtime.io.network.netty;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.runtime.io.network.NetworkClientHandler;
 import org.apache.flink.runtime.io.network.ConnectionID;
 import org.apache.flink.runtime.io.network.netty.exception.LocalTransportException;
@@ -38,6 +39,7 @@ import java.util.concurrent.ConcurrentMap;
  * Instances of partition requests clients are shared among several {@link RemoteInputChannel}
  * instances.
  */
+@Slf4j
 class PartitionRequestClientFactory {
 
 	private final NettyClient nettyClient;
@@ -81,7 +83,7 @@ class PartitionRequestClientFactory {
 
 				if (old == null) {
 					nettyClient.connect(connectionId.getAddress()).addListener(connectingChannel);
-
+					log.warn("connect manager 异步连接 {}",connectionId.getAddress());
 					client = connectingChannel.waitForChannel();
 
 					clients.replace(connectionId, connectingChannel, client);

@@ -348,8 +348,8 @@ public class SingleInputGate implements InputGate {
 	public void assignExclusiveSegments(InputChannel inputChannel) throws IOException {
 		Preconditions.checkNotNull(inputChannel);
 		Preconditions.checkArgument(inputChannel instanceof RemoteInputChannel, "InputChannel should be remote input channel only.");
-		checkState(this.networkBufferPool != null, "Bug in input gate setup logic: global buffer pool has " +
-			"not been set for this input gate.");
+		//checkState(this.networkBufferPool != null, "Bug in input gate setup logic: global buffer pool has " +
+		//	"not been set for this input gate.");
 
 		if (isCreditBased) {
 			((RemoteInputChannel) inputChannel).assignExclusiveSegments(
@@ -770,8 +770,8 @@ public class SingleInputGate implements InputGate {
 		for (int i = 0; i < inputChannels.length; i++) {
 			final ResultPartitionID partitionId = icdd[i].getConsumedPartitionId();
 			final ResultPartitionLocation partitionLocation = icdd[i].getConsumedPartitionLocation();
-
-			if (partitionLocation.isLocal()) {
+            // fixme 强制使用remote
+			if (partitionLocation.isLocal() ) {
 				inputChannels[i] = new LocalInputChannel(inputGate, i, partitionId,
 					networkEnvironment.getResultPartitionManager(),
 					networkEnvironment.getTaskEventDispatcher(),

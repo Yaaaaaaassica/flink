@@ -21,10 +21,15 @@ package org.apache.flink.streaming.examples.socket;
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.RestOptions;
+import org.apache.flink.configuration.TaskManagerOptions;
+import org.apache.flink.runtime.io.network.netty.NettyConfig;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.util.Collector;
+import org.apache.flink.util.ConfigurationException;
 
 /**
  * Implements a streaming windowed version of the "WordCount" program.
@@ -59,7 +64,13 @@ public class SocketWindowWordCount {
 		}
 
 		// get the execution environment
-		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+		Configuration configuration = new Configuration();
+		configuration.setBoolean(TaskManagerOptions.NETWORK_CREDIT_MODEL,false);
+		configuration.setInteger(RestOptions.PORT,8080);
+		final StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(configuration);
+
+		env.setBufferTimeout(0L);
 
 		// get input data by connecting to the socket
 		DataStream<String> text = env.socketTextStream(hostname, port, "\n");

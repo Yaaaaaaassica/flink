@@ -18,6 +18,7 @@
 
 package org.apache.flink.runtime.io.network.netty;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.runtime.io.network.NetworkSequenceViewReader;
 import org.apache.flink.runtime.io.network.partition.BufferAvailabilityListener;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionID;
@@ -36,6 +37,7 @@ import java.io.IOException;
  * <p>It also keeps track of available buffers and notifies the outbound
  * handler about non-emptiness, similar to the {@link LocalInputChannel}.
  */
+@Slf4j
 class SequenceNumberingViewReader implements BufferAvailabilityListener, NetworkSequenceViewReader {
 
 	private final Object requestLock = new Object();
@@ -109,6 +111,10 @@ class SequenceNumberingViewReader implements BufferAvailabilityListener, Network
 	@Override
 	public BufferAndAvailability getNextBuffer() throws IOException, InterruptedException {
 		BufferAndBacklog next = subpartitionView.getNextBuffer();
+
+
+		log.error(" {} {}",next);
+
 		if (next != null) {
 			sequenceNumber++;
 			return new BufferAndAvailability(next.buffer(), next.isMoreAvailable(), next.buffersInBacklog());

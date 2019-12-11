@@ -446,7 +446,8 @@ public class TaskManagerServicesConfiguration {
 		}
 
 		final NettyConfig nettyConfig;
-		if (!localTaskManagerCommunication) {
+		// fix me
+		if (!localTaskManagerCommunication || true) {
 			final InetSocketAddress taskManagerInetSocketAddress = new InetSocketAddress(taskManagerAddress, dataport);
 
 			nettyConfig = new NettyConfig(taskManagerInetSocketAddress.getAddress(),

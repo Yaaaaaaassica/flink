@@ -101,7 +101,7 @@ public class PartitionRequestClient {
 
 		checkNotClosed();
 
-		LOG.debug("Requesting subpartition {} of partition {} with {} ms delay.",
+		LOG.warn("Requesting subpartition {} of partition {} with {} ms delay.",
 				subpartitionIndex, partitionId, delayMs);
 
 		clientHandler.addInputChannel(inputChannel);

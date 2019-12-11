@@ -31,7 +31,8 @@ public class InternalResultPartitionLocationTracker implements ResultPartitionLo
 		TaskManagerLocation producerLocation,
 		TaskManagerLocation consumerLocation,
 		IntermediateResult intermediateResult) {
-		if (consumerLocation.getResourceID().equals(producerLocation.getResourceID())) {
+		// fixme 强制使用remote
+		if (consumerLocation.getResourceID().equals(producerLocation.getResourceID()) && false) {
 			// in the same taskmanager
 			return ResultPartitionLocation.createLocal();
 		} else {
