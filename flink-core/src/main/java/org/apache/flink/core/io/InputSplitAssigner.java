@@ -18,7 +18,6 @@
 
 package org.apache.flink.core.io;
 
-
 import org.apache.flink.annotation.PublicEvolving;
 
 import java.util.List;
@@ -41,10 +40,12 @@ public interface InputSplitAssigner {
 	InputSplit getNextInputSplit(String host, int taskId);
 
 	/**
-	 * Return the splits to assigner if the task failed to process it.
+	 * Notify that some input splits have already been assigned.
+	 * When get next input split, these splits should not be return.
+	 * This is usually due to job master failover.
 	 *
-	 * @param splits The list of input splits to be returned.
-	 * @param taskId The id of the task that failed to process the input splits.
-	 * */
-	void returnInputSplit(List<InputSplit> splits, int taskId);
+	 * @param taskId The id of the task which the input splits are assigned to.
+	 * @param inputSplits The input splits that have already been assigned.
+	 */
+	void inputSplitsAssigned(int taskId, List<InputSplit> inputSplits);
 }

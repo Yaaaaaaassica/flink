@@ -18,9 +18,7 @@
 
 package org.apache.flink.api.common.state;
 
-import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.PublicEvolving;
-import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
@@ -29,10 +27,6 @@ import org.apache.flink.core.memory.DataInputViewStreamWrapper;
 import org.apache.flink.core.memory.DataOutputViewStreamWrapper;
 import org.apache.flink.util.Preconditions;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import java.io.ByteArrayInputStream;
@@ -41,14 +35,14 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
  * Base class for state descriptors. A {@code StateDescriptor} is used for creating partitioned
- * {@link State} in stateful operations.
+ * {@link State} in stateful operations. This contains the name and can create an actual state
+ * object given a {@link StateBinder} using {@link #bind(StateBinder)}.
  *
  * <p>Subclasses must correctly implement {@link #equals(Object)} and {@link #hashCode()}.
  *
@@ -57,7 +51,6 @@ import static org.apache.flink.util.Preconditions.checkState;
  */
 @PublicEvolving
 public abstract class StateDescriptor<S extends State, T> implements Serializable {
-	private static final Logger LOG = LoggerFactory.getLogger(StateDescriptor.class);
 
 	/**
 	 * An enumeration of the types of supported states. Used to identify the state type
@@ -75,7 +68,8 @@ public abstract class StateDescriptor<S extends State, T> implements Serializabl
 		REDUCING,
 		FOLDING,
 		AGGREGATING,
-		MAP
+		MAP,
+		SORTEDMAP
 	}
 
 	private static final long serialVersionUID = 1L;
@@ -88,20 +82,17 @@ public abstract class StateDescriptor<S extends State, T> implements Serializabl
 	/** The serializer for the type. May be eagerly initialized in the constructor,
 	 * or lazily once the {@link #initializeSerializerUnlessSet(ExecutionConfig)} method
 	 * is called. */
-	private final AtomicReference<TypeSerializer<T>> serializerAtomicReference = new AtomicReference<>();
+	@Nullable
+	protected TypeSerializer<T> serializer;
 
 	/** The type information describing the value type. Only used to if the serializer
 	 * is created lazily. */
 	@Nullable
-	private TypeInformation<T> typeInfo;
+	protected TypeInformation<T> typeInfo;
 
 	/** Name for queries against state created from this StateDescriptor. */
 	@Nullable
 	private String queryableStateName;
-
-	/** Name for queries against state created from this StateDescriptor. */
-	@Nonnull
-	private StateTtlConfig ttlConfig = StateTtlConfig.DISABLED;
 
 	/** The default value returned by the state when no other value is bound to a key. */
 	@Nullable
@@ -119,7 +110,7 @@ public abstract class StateDescriptor<S extends State, T> implements Serializabl
 	 */
 	protected StateDescriptor(String name, TypeSerializer<T> serializer, @Nullable T defaultValue) {
 		this.name = checkNotNull(name, "name must not be null");
-		this.serializerAtomicReference.set(checkNotNull(serializer, "serializer must not be null"));
+		this.serializer = checkNotNull(serializer, "serializer must not be null");
 		this.defaultValue = defaultValue;
 	}
 
@@ -180,7 +171,6 @@ public abstract class StateDescriptor<S extends State, T> implements Serializabl
 	 */
 	public T getDefaultValue() {
 		if (defaultValue != null) {
-			TypeSerializer<T> serializer = serializerAtomicReference.get();
 			if (serializer != null) {
 				return serializer.copy(defaultValue);
 			} else {
@@ -197,19 +187,8 @@ public abstract class StateDescriptor<S extends State, T> implements Serializabl
 	 * calling {@link #initializeSerializerUnlessSet(ExecutionConfig)}.
 	 */
 	public TypeSerializer<T> getSerializer() {
-		TypeSerializer<T> serializer = serializerAtomicReference.get();
 		if (serializer != null) {
 			return serializer.duplicate();
-		} else {
-			throw new IllegalStateException("Serializer not yet initialized.");
-		}
-	}
-
-	@VisibleForTesting
-	final TypeSerializer<T> getOriginalSerializer() {
-		TypeSerializer<T> serializer = serializerAtomicReference.get();
-		if (serializer != null) {
-			return serializer;
 		} else {
 			throw new IllegalStateException("Serializer not yet initialized.");
 		}
@@ -226,9 +205,6 @@ public abstract class StateDescriptor<S extends State, T> implements Serializabl
 	 * @throws IllegalStateException If queryable state name already set
 	 */
 	public void setQueryable(String queryableStateName) {
-		Preconditions.checkArgument(
-			ttlConfig.getUpdateType() == StateTtlConfig.UpdateType.Disabled,
-			"Queryable state is currently not supported with TTL");
 		if (this.queryableStateName == null) {
 			this.queryableStateName = Preconditions.checkNotNull(queryableStateName, "Registration name");
 		} else {
@@ -257,27 +233,11 @@ public abstract class StateDescriptor<S extends State, T> implements Serializabl
 	}
 
 	/**
-	 * Configures optional activation of state time-to-live (TTL).
+	 * Creates a new {@link State} on the given {@link StateBinder}.
 	 *
-	 * <p>State user value will expire, become unavailable and be cleaned up in storage
-	 * depending on configured {@link StateTtlConfig}.
-	 *
-	 * @param ttlConfig configuration of state TTL
+	 * @param stateBinder The {@code StateBackend} on which to create the {@link State}.
 	 */
-	public void enableTimeToLive(StateTtlConfig ttlConfig) {
-		Preconditions.checkNotNull(ttlConfig);
-		Preconditions.checkArgument(
-			ttlConfig.getUpdateType() != StateTtlConfig.UpdateType.Disabled &&
-				queryableStateName == null,
-			"Queryable state is currently not supported with TTL");
-		this.ttlConfig = ttlConfig;
-	}
-
-	@Nonnull
-	@Internal
-	public StateTtlConfig getTtlConfig() {
-		return ttlConfig;
-	}
+	public abstract S bind(StateBinder stateBinder) throws Exception;
 
 	// ------------------------------------------------------------------------
 
@@ -289,7 +249,7 @@ public abstract class StateDescriptor<S extends State, T> implements Serializabl
 	 * @return True if the serializers have been initialized, false otherwise.
 	 */
 	public boolean isSerializerInitialized() {
-		return serializerAtomicReference.get() != null;
+		return serializer != null;
 	}
 
 	/**
@@ -298,14 +258,14 @@ public abstract class StateDescriptor<S extends State, T> implements Serializabl
 	 * @param executionConfig The execution config to use when creating the serializer.
 	 */
 	public void initializeSerializerUnlessSet(ExecutionConfig executionConfig) {
-		if (serializerAtomicReference.get() == null) {
+		if (serializer == null) {
 			checkState(typeInfo != null, "no serializer and no type info");
-			// try to instantiate and set the serializer
-			TypeSerializer<T> serializer = typeInfo.createSerializer(executionConfig);
-			// use cas to assure the singleton
-			if (!serializerAtomicReference.compareAndSet(null, serializer)) {
-				LOG.debug("Someone else beat us at initializing the serializer.");
-			}
+
+			// instantiate the serializer
+			serializer = typeInfo.createSerializer(executionConfig);
+
+			// we can drop the type info now, no longer needed
+			typeInfo  = null;
 		}
 	}
 
@@ -314,12 +274,12 @@ public abstract class StateDescriptor<S extends State, T> implements Serializabl
 	// ------------------------------------------------------------------------
 
 	@Override
-	public final int hashCode() {
+	public int hashCode() {
 		return name.hashCode() + 31 * getClass().hashCode();
 	}
 
 	@Override
-	public final boolean equals(Object o) {
+	public boolean equals(Object o) {
 		if (o == this) {
 			return true;
 		}
@@ -337,7 +297,7 @@ public abstract class StateDescriptor<S extends State, T> implements Serializabl
 		return getClass().getSimpleName() +
 				"{name=" + name +
 				", defaultValue=" + defaultValue +
-				", serializer=" + serializerAtomicReference.get() +
+				", serializer=" + serializer +
 				(isQueryable() ? ", queryableStateName=" + queryableStateName + "" : "") +
 				'}';
 	}
@@ -357,9 +317,6 @@ public abstract class StateDescriptor<S extends State, T> implements Serializabl
 			// we don't have a default value
 			out.writeBoolean(false);
 		} else {
-			TypeSerializer<T> serializer = serializerAtomicReference.get();
-			checkNotNull(serializer, "Serializer not initialized.");
-
 			// we have a default value
 			out.writeBoolean(true);
 
@@ -390,9 +347,6 @@ public abstract class StateDescriptor<S extends State, T> implements Serializabl
 		// read the default value field
 		boolean hasDefaultValue = in.readBoolean();
 		if (hasDefaultValue) {
-			TypeSerializer<T> serializer = serializerAtomicReference.get();
-			checkNotNull(serializer, "Serializer not initialized.");
-
 			int size = in.readInt();
 
 			byte[] buffer = new byte[size];

@@ -20,19 +20,21 @@ package org.apache.flink.runtime.jobmaster;
 
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.time.Time;
+import org.apache.flink.runtime.blob.TransientBlobKey;
 import org.apache.flink.runtime.checkpoint.CheckpointOptions;
+import org.apache.flink.runtime.clusterframework.ApplicationStatus;
 import org.apache.flink.runtime.clusterframework.types.AllocationID;
 import org.apache.flink.runtime.deployment.TaskDeploymentDescriptor;
 import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 import org.apache.flink.runtime.executiongraph.PartitionInfo;
-import org.apache.flink.runtime.io.network.partition.ResultPartitionID;
+import org.apache.flink.runtime.instance.InstanceID;
 import org.apache.flink.runtime.jobmanager.slots.TaskManagerGateway;
 import org.apache.flink.runtime.messages.Acknowledge;
+import org.apache.flink.runtime.messages.StackTrace;
 import org.apache.flink.runtime.messages.StackTraceSampleResponse;
 import org.apache.flink.runtime.taskexecutor.TaskExecutorGateway;
 import org.apache.flink.util.Preconditions;
 
-import java.util.Collection;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -52,6 +54,24 @@ public class RpcTaskManagerGateway implements TaskManagerGateway {
 	@Override
 	public String getAddress() {
 		return taskExecutorGateway.getAddress();
+	}
+
+	@Override
+	public void disconnectFromJobManager(InstanceID instanceId, Exception cause) {
+//		taskExecutorGateway.disconnectFromJobManager(instanceId, cause);
+		throw new UnsupportedOperationException("Operation is not yet supported.");
+	}
+
+	@Override
+	public void stopCluster(ApplicationStatus applicationStatus, String message) {
+//		taskExecutorGateway.stopCluster(applicationStatus, message);
+		throw new UnsupportedOperationException("Operation is not yet supported.");
+	}
+
+	@Override
+	public CompletableFuture<StackTrace> requestStackTrace(Time timeout) {
+//		return taskExecutorGateway.requestStackTrace(timeout);
+		throw new UnsupportedOperationException("Operation is not yet supported.");
 	}
 
 	@Override
@@ -78,6 +98,11 @@ public class RpcTaskManagerGateway implements TaskManagerGateway {
 	}
 
 	@Override
+	public CompletableFuture<Acknowledge> stopTask(ExecutionAttemptID executionAttemptID, Time timeout) {
+		return taskExecutorGateway.stopTask(executionAttemptID, timeout);
+	}
+
+	@Override
 	public CompletableFuture<Acknowledge> cancelTask(ExecutionAttemptID executionAttemptID, Time timeout) {
 		return taskExecutorGateway.cancelTask(executionAttemptID, timeout);
 	}
@@ -88,8 +113,8 @@ public class RpcTaskManagerGateway implements TaskManagerGateway {
 	}
 
 	@Override
-	public void releasePartitions(JobID jobId, Collection<ResultPartitionID> partitionIds) {
-		taskExecutorGateway.releasePartitions(jobId, partitionIds);
+	public void failPartition(ExecutionAttemptID executionAttemptID) {
+		taskExecutorGateway.failPartition(executionAttemptID);
 	}
 
 	@Override
@@ -98,13 +123,22 @@ public class RpcTaskManagerGateway implements TaskManagerGateway {
 	}
 
 	@Override
-	public void triggerCheckpoint(ExecutionAttemptID executionAttemptID, JobID jobId, long checkpointId, long timestamp, CheckpointOptions checkpointOptions, boolean advanceToEndOfEventTime) {
+	public void triggerCheckpoint(ExecutionAttemptID executionAttemptID, JobID jobId, long checkpointId, long timestamp, CheckpointOptions checkpointOptions) {
 		taskExecutorGateway.triggerCheckpoint(
 			executionAttemptID,
 			checkpointId,
 			timestamp,
-			checkpointOptions,
-			advanceToEndOfEventTime);
+			checkpointOptions);
+	}
+
+	@Override
+	public CompletableFuture<TransientBlobKey> requestTaskManagerLog(Time timeout) {
+		return taskExecutorGateway.requestFileUpload("taskmanager.log", null, timeout);
+	}
+
+	@Override
+	public CompletableFuture<TransientBlobKey> requestTaskManagerStdout(Time timeout) {
+		return taskExecutorGateway.requestFileUpload("taskmanager.out", null, timeout);
 	}
 
 	@Override

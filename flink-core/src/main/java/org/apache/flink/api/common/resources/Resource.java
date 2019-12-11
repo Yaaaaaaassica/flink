@@ -61,43 +61,46 @@ public abstract class Resource implements Serializable {
 	}
 
 	public Resource merge(Resource other) {
-		Preconditions.checkArgument(getClass() == other.getClass(), "Merge with different resource type");
-		Preconditions.checkArgument(name.equals(other.name), "Merge with different resource name");
-		Preconditions.checkArgument(resourceAggregateType == other.resourceAggregateType, "Merge with different aggregate resourceAggregateType");
+		Preconditions.checkArgument(getClass() == other.getClass(), "Merge with different resource resourceAggregateType");
+		Preconditions.checkArgument(this.name.equals(other.name), "Merge with different resource name");
+		Preconditions.checkArgument(this.resourceAggregateType == other.resourceAggregateType, "Merge with different aggregate resourceAggregateType");
 
 		final double aggregatedValue;
 		switch (resourceAggregateType) {
 			case AGGREGATE_TYPE_MAX :
-				aggregatedValue = Math.max(value, other.value);
+				aggregatedValue = Math.max(other.value, this.value);
 				break;
 
 			case AGGREGATE_TYPE_SUM:
 			default:
-				aggregatedValue = value + other.value;
+				aggregatedValue = this.value + other.value;
 		}
 
 		return create(aggregatedValue, resourceAggregateType);
 	}
 
-	public Resource subtract(Resource other) {
-		Preconditions.checkArgument(getClass() == other.getClass(), "Minus with different resource type");
-		Preconditions.checkArgument(name.equals(other.name), "Minus with different resource name");
-		Preconditions.checkArgument(resourceAggregateType == other.resourceAggregateType, "Minus with different aggregate resourceAggregateType");
-		Preconditions.checkArgument(value >= other.value, "Try to subtract a larger resource from this one.");
+	public Resource minus(Resource other) {
+		Preconditions.checkArgument(getClass() == other.getClass(), "Minus with different resource resourceAggregateType");
+		Preconditions.checkArgument(this.name.equals(other.name), "Minus with different resource name");
+		Preconditions.checkArgument(this.resourceAggregateType == other.resourceAggregateType, "Minus with different aggregate resourceAggregateType");
 
-		final double subtractedValue;
+		final double aggregatedValue;
 		switch (resourceAggregateType) {
 			case AGGREGATE_TYPE_MAX :
 				// TODO: For max, should check if the latest max item is removed and change accordingly.
-				subtractedValue = value;
+				aggregatedValue = this.value;
 				break;
 
 			case AGGREGATE_TYPE_SUM:
 			default:
-				subtractedValue = value - other.value;
+				aggregatedValue = this.value - other.value;
 		}
 
-		return create(subtractedValue, resourceAggregateType);
+		return create(aggregatedValue, resourceAggregateType);
+	}
+
+	public Resource multiply(int multiplier) {
+		return create(this.getValue() * multiplier, resourceAggregateType);
 	}
 
 	@Override
@@ -126,11 +129,11 @@ public abstract class Resource implements Serializable {
 	}
 
 	public ResourceAggregateType getResourceAggregateType() {
-		return resourceAggregateType;
+		return this.resourceAggregateType;
 	}
 
 	public double getValue() {
-		return value;
+		return this.value;
 	}
 
 	/**

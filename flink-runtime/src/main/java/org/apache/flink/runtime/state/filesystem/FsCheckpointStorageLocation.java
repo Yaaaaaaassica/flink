@@ -19,7 +19,6 @@
 package org.apache.flink.runtime.state.filesystem;
 
 import org.apache.flink.annotation.VisibleForTesting;
-import org.apache.flink.core.fs.EntropyInjector;
 import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.runtime.state.CheckpointMetadataOutputStream;
@@ -40,6 +39,8 @@ public class FsCheckpointStorageLocation extends FsCheckpointStreamFactory imple
 
 	private final Path checkpointDirectory;
 
+	private final Path exclusiveCheckpointDirectory;
+
 	private final Path sharedStateDirectory;
 
 	private final Path taskOwnedStateDirectory;
@@ -50,34 +51,28 @@ public class FsCheckpointStorageLocation extends FsCheckpointStreamFactory imple
 
 	private final int fileStateSizeThreshold;
 
-	private final int writeBufferSize;
-
 	public FsCheckpointStorageLocation(
 			FileSystem fileSystem,
 			Path checkpointDir,
+			Path exclusiveCheckpointDir,
 			Path sharedStateDir,
 			Path taskOwnedStateDir,
 			CheckpointStorageLocationReference reference,
-			int fileStateSizeThreshold,
-			int writeBufferSize) {
+			int fileStateSizeThreshold) {
 
-		super(fileSystem, checkpointDir, sharedStateDir, fileStateSizeThreshold, writeBufferSize);
+		super(fileSystem, checkpointDir, exclusiveCheckpointDir, sharedStateDir, fileStateSizeThreshold);
 
 		checkArgument(fileStateSizeThreshold >= 0);
-		checkArgument(writeBufferSize >= 0);
 
 		this.fileSystem = checkNotNull(fileSystem);
 		this.checkpointDirectory = checkNotNull(checkpointDir);
+		this.exclusiveCheckpointDirectory = checkNotNull(exclusiveCheckpointDir);
 		this.sharedStateDirectory = checkNotNull(sharedStateDir);
 		this.taskOwnedStateDirectory = checkNotNull(taskOwnedStateDir);
 		this.reference = checkNotNull(reference);
 
-		// the metadata file should not have entropy in its path
-		Path metadataDir = EntropyInjector.removeEntropyMarkerIfPresent(fileSystem, checkpointDir);
-
-		this.metadataFilePath = new Path(metadataDir, AbstractFsCheckpointStorage.METADATA_FILE_NAME);
+		this.metadataFilePath = new Path(checkpointDir, AbstractFsCheckpointStorage.METADATA_FILE_NAME);
 		this.fileStateSizeThreshold = fileStateSizeThreshold;
-		this.writeBufferSize = writeBufferSize;
 	}
 
 	// ------------------------------------------------------------------------
@@ -86,6 +81,10 @@ public class FsCheckpointStorageLocation extends FsCheckpointStreamFactory imple
 
 	public Path getCheckpointDirectory() {
 		return checkpointDirectory;
+	}
+
+	public Path getExclusiveCheckpointDirectory() {
+		return exclusiveCheckpointDirectory;
 	}
 
 	public Path getSharedStateDirectory() {
@@ -130,12 +129,12 @@ public class FsCheckpointStorageLocation extends FsCheckpointStreamFactory imple
 		return "FsCheckpointStorageLocation {" +
 				"fileSystem=" + fileSystem +
 				", checkpointDirectory=" + checkpointDirectory +
+				", exclusiveCheckpointDirectory=" + exclusiveCheckpointDirectory +
 				", sharedStateDirectory=" + sharedStateDirectory +
 				", taskOwnedStateDirectory=" + taskOwnedStateDirectory +
 				", metadataFilePath=" + metadataFilePath +
 				", reference=" + reference +
 				", fileStateSizeThreshold=" + fileStateSizeThreshold +
-				", writeBufferSize=" + writeBufferSize +
 				'}';
 	}
 

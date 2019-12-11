@@ -18,7 +18,6 @@
 
 package org.apache.flink.runtime.state.memory;
 
-import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.core.fs.Path;
@@ -58,6 +57,7 @@ public class MemoryBackendCheckpointStorage extends AbstractFsCheckpointStorage 
 	 * Creates a new MemoryBackendCheckpointStorage.
 	 *
 	 * @param jobId The ID of the job writing the checkpoints.
+	 * @param createCheckpointSubDir Whether to create sub-directory with name of jobId.
 	 * @param checkpointsBaseDirectory The directory to write checkpoints to. May be null,
 	 *                                 in which case this storage does not support durable persistence.
 	 * @param defaultSavepointLocation The default savepoint directory, or null, if none is set.
@@ -68,6 +68,7 @@ public class MemoryBackendCheckpointStorage extends AbstractFsCheckpointStorage 
 	 */
 	public MemoryBackendCheckpointStorage(
 			JobID jobId,
+			boolean createCheckpointSubDir,
 			@Nullable Path checkpointsBaseDirectory,
 			@Nullable Path defaultSavepointLocation,
 			int maxStateSize) throws IOException {
@@ -83,7 +84,10 @@ public class MemoryBackendCheckpointStorage extends AbstractFsCheckpointStorage 
 		}
 		else {
 			this.fileSystem = checkpointsBaseDirectory.getFileSystem();
-			this.checkpointsDirectory = getCheckpointDirectoryForJob(checkpointsBaseDirectory, jobId);
+			this.checkpointsDirectory = createCheckpointSubDir ?
+				getCheckpointDirectoryForJob(checkpointsBaseDirectory, jobId) : checkpointsBaseDirectory;
+
+			fileSystem.mkdirs(checkpointsDirectory);
 		}
 	}
 
@@ -98,11 +102,6 @@ public class MemoryBackendCheckpointStorage extends AbstractFsCheckpointStorage 
 		return maxStateSize;
 	}
 
-	@VisibleForTesting
-	Path getCheckpointsDirectory() {
-		return checkpointsDirectory;
-	}
-
 	// ------------------------------------------------------------------------
 	//  Checkpoint Storage
 	// ------------------------------------------------------------------------
@@ -110,12 +109,6 @@ public class MemoryBackendCheckpointStorage extends AbstractFsCheckpointStorage 
 	@Override
 	public boolean supportsHighlyAvailableStorage() {
 		return checkpointsDirectory != null;
-	}
-
-	@Override
-	public void initializeBaseLocations() {
-		// since 'checkpointDir' which under 'checkpointsDirectory' would be created when calling
-		// #initializeLocationForCheckpoint, we could also avoid to call mkdirs for the 'checkpointsDirectory' here.
 	}
 
 	@Override
@@ -143,7 +136,7 @@ public class MemoryBackendCheckpointStorage extends AbstractFsCheckpointStorage 
 	@Override
 	public CheckpointStreamFactory resolveCheckpointStorageLocation(
 			long checkpointId,
-			CheckpointStorageLocationReference reference) {
+			CheckpointStorageLocationReference reference) throws IOException {
 
 		// no matter where the checkpoint goes, we always return the storage location that stores
 		// state inline with the state handles.
@@ -151,12 +144,12 @@ public class MemoryBackendCheckpointStorage extends AbstractFsCheckpointStorage 
 	}
 
 	@Override
-	public CheckpointStateOutputStream createTaskOwnedStateStream() {
+	public CheckpointStateOutputStream createTaskOwnedStateStream() throws IOException {
 		return new MemoryCheckpointOutputStream(maxStateSize);
 	}
 
 	@Override
-	protected CheckpointStorageLocation createSavepointLocation(FileSystem fs, Path location) {
+	protected CheckpointStorageLocation createSavepointLocation(FileSystem fs, Path location) throws IOException {
 		return new PersistentMetadataCheckpointStorageLocation(fs, location, maxStateSize);
 	}
 

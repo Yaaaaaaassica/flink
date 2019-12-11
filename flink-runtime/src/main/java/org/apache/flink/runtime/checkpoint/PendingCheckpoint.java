@@ -20,7 +20,7 @@ package org.apache.flink.runtime.checkpoint;
 
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.runtime.checkpoint.savepoint.Savepoint;
-import org.apache.flink.runtime.checkpoint.savepoint.SavepointV2;
+import org.apache.flink.runtime.checkpoint.savepoint.SavepointV3;
 import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 import org.apache.flink.runtime.executiongraph.ExecutionVertex;
 import org.apache.flink.runtime.jobgraph.OperatorID;
@@ -252,7 +252,7 @@ public class PendingCheckpoint {
 			// make sure we fulfill the promise with an exception if something fails
 			try {
 				// write out the metadata
-				final Savepoint savepoint = new SavepointV2(checkpointId, operatorStates.values(), masterState);
+				final Savepoint savepoint = new SavepointV3(checkpointId, operatorStates.values(), masterState);
 				final CompletedCheckpointStorageLocation finalizedLocation;
 
 				try (CheckpointMetadataOutputStream out = targetLocation.createMetadataOutputStream()) {
@@ -404,30 +404,56 @@ public class PendingCheckpoint {
 	// ------------------------------------------------------------------------
 
 	/**
-	 * Aborts a checkpoint with reason and cause.
+	 * Aborts a checkpoint because it expired (took too long).
 	 */
-	public void abort(CheckpointFailureReason reason, @Nullable Throwable cause) {
+	public void abortExpired() {
 		try {
-			CheckpointException exception = new CheckpointException(reason, cause);
-			onCompletionPromise.completeExceptionally(exception);
-			reportFailedCheckpoint(exception);
-			assertAbortSubsumedForced(reason);
+			Exception cause = new Exception("Checkpoint expired before completing");
+			onCompletionPromise.completeExceptionally(cause);
+			reportFailedCheckpoint(cause);
 		} finally {
 			dispose(true);
 		}
 	}
 
 	/**
-	 * Aborts a checkpoint with reason and cause.
+	 * Aborts the pending checkpoint because a newer completed checkpoint subsumed it.
 	 */
-	public void abort(CheckpointFailureReason reason) {
-		abort(reason, null);
+	public void abortSubsumed() {
+		try {
+			Exception cause = new Exception("Checkpoints has been subsumed");
+			onCompletionPromise.completeExceptionally(cause);
+			reportFailedCheckpoint(cause);
+
+			if (props.forceCheckpoint()) {
+				throw new IllegalStateException("Bug: forced checkpoints must never be subsumed");
+			}
+		} finally {
+			dispose(true);
+		}
 	}
 
-	private void assertAbortSubsumedForced(CheckpointFailureReason reason) {
-		if (props.forceCheckpoint() && reason == CheckpointFailureReason.CHECKPOINT_SUBSUMED) {
-			throw new IllegalStateException("Bug: forced checkpoints must never be subsumed, " +
-				"the abort reason is : " + reason.message());
+	public void abortDeclined() {
+		try {
+			Exception cause = new Exception("Checkpoint was declined (tasks not ready)");
+			onCompletionPromise.completeExceptionally(cause);
+			reportFailedCheckpoint(cause);
+		} finally {
+			dispose(true);
+		}
+	}
+
+	/**
+	 * Aborts the pending checkpoint due to an error.
+	 * @param cause The error's exception.
+	 */
+	public void abortError(Throwable cause) {
+		try {
+			Exception failure = new Exception("Checkpoint failed: " + cause.getMessage(), cause);
+			onCompletionPromise.completeExceptionally(failure);
+			reportFailedCheckpoint(failure);
+		} finally {
+			dispose(true);
 		}
 	}
 

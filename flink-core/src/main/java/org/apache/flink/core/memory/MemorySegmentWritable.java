@@ -18,14 +18,11 @@
 
 package org.apache.flink.core.memory;
 
-import org.apache.flink.annotation.Internal;
-
 import java.io.IOException;
 
 /**
  * Provides the interface for write(Segment).
  */
-@Internal
 public interface MemorySegmentWritable {
 
 	/**

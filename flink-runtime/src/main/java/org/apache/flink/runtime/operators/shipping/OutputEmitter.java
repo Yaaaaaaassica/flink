@@ -22,7 +22,6 @@ import org.apache.flink.api.common.distributions.DataDistribution;
 import org.apache.flink.api.common.functions.Partitioner;
 import org.apache.flink.api.common.typeutils.TypeComparator;
 import org.apache.flink.runtime.io.network.api.writer.ChannelSelector;
-import org.apache.flink.runtime.plugable.SerializationDelegate;
 import org.apache.flink.util.MathUtils;
 
 /**
@@ -33,17 +32,14 @@ import org.apache.flink.util.MathUtils;
  * @param <T> The type of the element handled by the emitter.
  */
 
-public class OutputEmitter<T> implements ChannelSelector<SerializationDelegate<T>> {
-	
+public class OutputEmitter<T> implements ChannelSelector<T> {
+
 	/** the shipping strategy used by this output emitter */
 	private final ShipStrategyType strategy;
 
 	/** counter to go over channels round robin */
-	private int nextChannelToSendTo;
+	private int nextChannelToSendTo = 0;
 
-	/** the total number of output channels */
-	private int numberOfChannels;
-	
 	/** the comparator for hashing / sorting */
 	private final TypeComparator<T> comparator;
 
@@ -56,7 +52,7 @@ public class OutputEmitter<T> implements ChannelSelector<SerializationDelegate<T
 	private TypeComparator[] flatComparators;
 
 	private Object[] keys;
-	
+
 	private Object[] extractedKeys;
 
 	// ------------------------------------------------------------------------
@@ -66,23 +62,24 @@ public class OutputEmitter<T> implements ChannelSelector<SerializationDelegate<T
 	/**
 	 * Creates a new channel selector that uses the given strategy (broadcasting, partitioning, ...)
 	 * and uses the supplied task index perform a round robin distribution.
-	 * 
+	 *
 	 * @param strategy The distribution strategy to be used.
 	 */
 	public OutputEmitter(ShipStrategyType strategy, int indexInSubtaskGroup) {
 		this(strategy, indexInSubtaskGroup, null, null, null);
 	}
-	
+
 	/**
 	 * Creates a new channel selector that uses the given strategy (broadcasting, partitioning, ...)
 	 * and uses the supplied comparator to hash / compare records for partitioning them deterministically.
-	 * 
+	 *
 	 * @param strategy The distribution strategy to be used.
 	 * @param comparator The comparator used to hash / compare the records.
 	 */
 	public OutputEmitter(ShipStrategyType strategy, TypeComparator<T> comparator) {
 		this(strategy, 0, comparator, null, null);
 	}
+
 
 	@SuppressWarnings("unchecked")
 	public OutputEmitter(
@@ -91,7 +88,7 @@ public class OutputEmitter<T> implements ChannelSelector<SerializationDelegate<T
 			TypeComparator<T> comparator,
 			Partitioner<?> partitioner,
 			DataDistribution distribution) {
-		if (strategy == null) { 
+		if (strategy == null) {
 			throw new NullPointerException();
 		}
 
@@ -131,12 +128,7 @@ public class OutputEmitter<T> implements ChannelSelector<SerializationDelegate<T
 	// ------------------------------------------------------------------------
 
 	@Override
-	public void setup(int numberOfChannels) {
-		this.numberOfChannels = numberOfChannels;
-	}
-
-	@Override
-	public final int selectChannel(SerializationDelegate<T> record) {
+	public final int selectChannel(T record, int numberOfChannels) {
 		switch (strategy) {
 		case FORWARD:
 			return forward();
@@ -144,25 +136,16 @@ public class OutputEmitter<T> implements ChannelSelector<SerializationDelegate<T
 		case PARTITION_FORCED_REBALANCE:
 			return robin(numberOfChannels);
 		case PARTITION_HASH:
-			return hashPartitionDefault(record.getInstance(), numberOfChannels);
+			return hashPartitionDefault(record, numberOfChannels);
 		case PARTITION_CUSTOM:
-			return customPartition(record.getInstance(), numberOfChannels);
+			return customPartition(record, numberOfChannels);
 		case PARTITION_RANGE:
-			return rangePartition(record.getInstance(), numberOfChannels);
+			return rangePartition(record, numberOfChannels);
 		default:
 			throw new UnsupportedOperationException("Unsupported distribution strategy: " + strategy.name());
 		}
 	}
 
-	@Override
-	public boolean isBroadcast() {
-		if (strategy == ShipStrategyType.BROADCAST) {
-			return true;
-		} else {
-			return false;
-		}
-	}
-	
 	// --------------------------------------------------------------------------------------------
 
 	private int forward() {
@@ -170,7 +153,8 @@ public class OutputEmitter<T> implements ChannelSelector<SerializationDelegate<T
 	}
 
 	private int robin(int numberOfChannels) {
-		int nextChannel = nextChannelToSendTo;
+		int nextChannel = this.nextChannelToSendTo;
+
 		if (nextChannel >= numberOfChannels) {
 			if (nextChannel == numberOfChannels) {
 				nextChannel = 0;
@@ -178,6 +162,7 @@ public class OutputEmitter<T> implements ChannelSelector<SerializationDelegate<T
 				nextChannel %= numberOfChannels;
 			}
 		}
+
 		nextChannelToSendTo = nextChannel + 1;
 
 		return nextChannel;
@@ -216,7 +201,8 @@ public class OutputEmitter<T> implements ChannelSelector<SerializationDelegate<T
 					return mid;
 				}
 			}
-			// key not found, but the low index is the target bucket, since the boundaries are the upper bound
+			// key not found, but the low index is the target
+			// bucket, since the boundaries are the upper bound
 			return low;
 		} else {
 			throw new IllegalStateException(
@@ -243,7 +229,7 @@ public class OutputEmitter<T> implements ChannelSelector<SerializationDelegate<T
 		}
 	}
 
-	private final int compareRecordAndBoundary(T record, Object[] boundary) {
+	private int compareRecordAndBoundary(T record, Object[] boundary) {
 		this.comparator.extractKeys(record, keys, 0);
 
 		if (flatComparators.length != keys.length || flatComparators.length > boundary.length) {

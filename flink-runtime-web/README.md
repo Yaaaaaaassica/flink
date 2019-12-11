@@ -41,16 +41,15 @@ The framework has very lightweight dependencies.
 The code is regular Java code built via Maven. To add additional request handlers, follow the
 example of the `org.apache.flink.runtime.webmonitor.handlers.JobSummaryHandler`.
 
-
 ## Dashboard Frontend 
 
 The web dashboard is implemented using *Angular*. The dashboard build infrastructure uses *node.js*.
 
 
+
 ### Preparing the Build Environment
 
 Depending on your version of Linux, Windows or MacOS, you may need to manually install *node.js*
-
 
 
 #### Ubuntu Linux

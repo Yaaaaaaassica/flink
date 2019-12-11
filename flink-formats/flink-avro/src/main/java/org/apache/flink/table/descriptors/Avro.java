@@ -18,7 +18,6 @@
 
 package org.apache.flink.table.descriptors;
 
-import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.util.Preconditions;
 
 import org.apache.avro.specific.SpecificRecord;
@@ -28,7 +27,6 @@ import java.util.Map;
 /**
  * Format descriptor for Apache Avro records.
  */
-@PublicEvolving
 public class Avro extends FormatDescriptor {
 
 	private Class<? extends SpecificRecord> recordClass;
@@ -63,8 +61,11 @@ public class Avro extends FormatDescriptor {
 		return this;
 	}
 
+	/**
+	 * Internal method for format properties conversion.
+	 */
 	@Override
-	protected Map<String, String> toFormatProperties() {
+	public Map<String, String> toFormatProperties() {
 		final DescriptorProperties properties = new DescriptorProperties();
 
 		if (null != recordClass) {

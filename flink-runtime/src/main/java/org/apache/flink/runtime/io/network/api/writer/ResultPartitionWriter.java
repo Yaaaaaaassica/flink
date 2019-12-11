@@ -18,28 +18,19 @@
 
 package org.apache.flink.runtime.io.network.api.writer;
 
-import org.apache.flink.runtime.io.network.buffer.BufferBuilder;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.runtime.event.AbstractEvent;
 import org.apache.flink.runtime.io.network.buffer.BufferConsumer;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionID;
-
-import javax.annotation.Nullable;
+import org.apache.flink.runtime.jobgraph.tasks.AbstractInvokable;
+import org.apache.flink.runtime.metrics.groups.TaskIOMetricGroup;
 
 import java.io.IOException;
 
 /**
  * A buffer-oriented runtime result writer API for producing results.
- *
- * <p>If {@link ResultPartitionWriter#close()} is called before {@link ResultPartitionWriter#fail(Throwable)} or
- * {@link ResultPartitionWriter#finish()}, it abruptly triggers failure and cancellation of production.
- * In this case {@link ResultPartitionWriter#fail(Throwable)} still needs to be called afterwards to fully release
- * all resources associated the the partition and propagate failure cause to the consumer if possible.
  */
-public interface ResultPartitionWriter extends AutoCloseable {
-
-	/**
-	 * Setup partition, potentially heavy-weight, blocking operation comparing to just creation.
-	 */
-	void setup() throws IOException;
+public interface ResultPartitionWriter<T> {
 
 	ResultPartitionID getPartitionId();
 
@@ -48,22 +39,41 @@ public interface ResultPartitionWriter extends AutoCloseable {
 	int getNumTargetKeyGroups();
 
 	/**
-	 * Requests a {@link BufferBuilder} from this partition for writing data.
+	 * Adds a record to all target channels.
+	 *
+	 * @param record         The record to write.
+	 * @param targetChannels The target channels.
+	 * @param isBroadcast    Whether broadcast or not.
+	 * @param flushAlways  Whether flush or not.
 	 */
-	BufferBuilder getBufferBuilder() throws IOException, InterruptedException;
+	void emitRecord(T record, int[] targetChannels, boolean isBroadcast, boolean flushAlways) throws IOException, InterruptedException;
 
 	/**
-	 * Adds the bufferConsumer to the subpartition with the given index.
+	 * Adds a record to a random channel.
 	 *
-	 * <p>This method takes the ownership of the passed {@code bufferConsumer} and thus is responsible for releasing
-	 * it's resources.
-	 *
-	 * <p>To avoid problems with data re-ordering, before adding new {@link BufferConsumer} the previously added one
-	 * the given {@code subpartitionIndex} must be marked as {@link BufferConsumer#isFinished()}.
-	 *
-	 * @return true if operation succeeded and bufferConsumer was enqueued for consumption.
+	 * @param record         The record to write.
+	 * @param targetChannel The target channel.
+	 * @param flushAlways  Whether flush or not.
 	 */
-	boolean addBufferConsumer(BufferConsumer bufferConsumer, int subpartitionIndex) throws IOException;
+	void emitRecord(T record, int targetChannel, boolean isBroadcast, boolean flushAlways) throws IOException, InterruptedException;
+
+	/**
+	 * Broadcasts an event to all subpartitions.
+	 *
+	 * @param event The event to be broadcast.
+	 * @param flushAlways  Whether to flush or not.
+	 */
+	void broadcastEvent(AbstractEvent event, boolean flushAlways) throws IOException;
+
+	/**
+	 * Closes all the buffer builders.
+	 */
+	void clearBuffers();
+
+	/**
+	 * Sets the metric group for this ResultPartitionWriter.
+	 */
+	void setMetricGroup(TaskIOMetricGroup metrics, boolean enableTracingMetrics, int tracingMetricsInterval);
 
 	/**
 	 * Manually trigger consumption from enqueued {@link BufferConsumer BufferConsumers} in all subpartitions.
@@ -76,20 +86,16 @@ public interface ResultPartitionWriter extends AutoCloseable {
 	void flush(int subpartitionIndex);
 
 	/**
-	 * Fail the production of the partition.
+	 * Sets the serialization and deserialization serializer.
 	 *
-	 * <p>This method propagates non-{@code null} failure causes to consumers on a best-effort basis. This call also
-	 * leads to the release of all resources associated with the partition. Closing of the partition is still needed
-	 * afterwards if it has not been done before.
-	 *
-	 * @param throwable failure cause
+	 * @param typeSerializer The type serializer used.
 	 */
-	void fail(@Nullable Throwable throwable);
+	void setTypeSerializer(TypeSerializer typeSerializer);
 
 	/**
-	 * Successfully finish the production of the partition.
+	 * Sets the parent task.
 	 *
-	 * <p>Closing of partition is still needed afterwards.
+	 * @param parentTask The parent task.
 	 */
-	void finish() throws IOException;
+	void setParentTask(AbstractInvokable parentTask);
 }

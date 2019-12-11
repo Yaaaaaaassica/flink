@@ -22,7 +22,6 @@ import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.DataOutputView;
 import org.apache.flink.util.Preconditions;
 
-import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.InvalidClassException;
 import java.util.Arrays;
@@ -34,28 +33,14 @@ import java.util.Arrays;
 public class UnloadableDummyTypeSerializer<T> extends TypeSerializer<T> {
 
 	private static final long serialVersionUID = 2526330533671642711L;
-
 	private final byte[] actualBytes;
 
-	@Nullable
-	private final Throwable originalError;
-
 	public UnloadableDummyTypeSerializer(byte[] actualBytes) {
-		this(actualBytes, null);
-	}
-
-	public UnloadableDummyTypeSerializer(byte[] actualBytes, @Nullable Throwable originalError) {
 		this.actualBytes = Preconditions.checkNotNull(actualBytes);
-		this.originalError = originalError;
 	}
 
 	public byte[] getActualBytes() {
 		return actualBytes;
-	}
-
-	@Nullable
-	public Throwable getOriginalError() {
-		return originalError;
 	}
 
 	@Override
@@ -109,8 +94,18 @@ public class UnloadableDummyTypeSerializer<T> extends TypeSerializer<T> {
 	}
 
 	@Override
-	public TypeSerializerSnapshot<T> snapshotConfiguration() {
+	public TypeSerializerConfigSnapshot snapshotConfiguration() {
 		throw new UnsupportedOperationException("This object is a dummy TypeSerializer.");
+	}
+
+	@Override
+	public CompatibilityResult<T> ensureCompatibility(TypeSerializerConfigSnapshot configSnapshot) {
+		throw new UnsupportedOperationException("This object is a dummy TypeSerializer.");
+	}
+
+	@Override
+	public boolean canEqual(Object obj) {
+		return false;
 	}
 
 	@Override

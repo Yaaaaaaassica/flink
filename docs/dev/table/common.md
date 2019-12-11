@@ -27,19 +27,6 @@ The Table API and SQL are integrated in a joint API. The central concept of this
 * This will be replaced by the TOC
 {:toc}
 
-Main Differences Between the Two Planners
------------------------------------------
-
-1. Blink treats batch jobs as a special case of streaming. As such, the conversion between Table and DataSet is also not supported, and batch jobs will not be translated into `DateSet` programs but translated into `DataStream` programs, the same as the streaming jobs.
-2. The Blink planner does not support `BatchTableSource`, use bounded `StreamTableSource` instead of it.
-3. The Blink planner only support the brand new `Catalog` and does not support `ExternalCatalog` which is deprecated.
-4. The implementations of `FilterableTableSource` for the old planner and the Blink planner are incompatible. The old planner will push down `PlannerExpression`s into `FilterableTableSource`, while the Blink planner will push down `Expression`s.
-5. String based key-value config options (Please see the documentation about [Configuration]({{ site.baseurl }}/dev/table/config.html) for details) are only used for the Blink planner.
-6. The implementation(`CalciteConfig`) of `PlannerConfig` in two planners is different.
-7. The Blink planner will optimize multiple-sinks into one DAG (supported only on `TableEnvironment`, not on `StreamTableEnvironment`). The old planner will always optimize each sink into a new DAG, where all DAGs are independent of each other.
-8. The old planner does not support catalog statistics now, while the Blink planner does.
-
-
 Structure of Table API and SQL Programs
 ---------------------------------------
 
@@ -48,15 +35,17 @@ All Table API and SQL programs for batch and streaming follow the same pattern. 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
+// for batch programs use ExecutionEnvironment instead of StreamExecutionEnvironment
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-// create a TableEnvironment for specific planner batch or streaming
-TableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+// create a TableEnvironment
+// for batch programs use BatchTableEnvironment instead of StreamTableEnvironment
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 // register a Table
 tableEnv.registerTable("table1", ...)            // or
-tableEnv.registerTableSource("table2", ...);
-// register an output Table
-tableEnv.registerTableSink("outputTable", ...);
+tableEnv.registerTableSource("table2", ...);     // or
+tableEnv.registerCatalog("extCat", ...);
 
 // create a Table from a Table API query
 Table tapiResult = tableEnv.scan("table1").select(...);
@@ -64,69 +53,45 @@ Table tapiResult = tableEnv.scan("table1").select(...);
 Table sqlResult  = tableEnv.sqlQuery("SELECT ... FROM table2 ... ");
 
 // emit a Table API result Table to a TableSink, same for SQL result
-tapiResult.insertInto("outputTable");
+tapiResult.writeToSink(...);
 
 // execute
-tableEnv.execute("java_job");
+tableEnv.execute();
 
 {% endhighlight %}
 </div>
 
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
+// for batch programs use ExecutionEnvironment instead of StreamExecutionEnvironment
+val env = StreamExecutionEnvironment.getExecutionEnvironment
 
-// create a TableEnvironment for specific planner batch or streaming
-val tableEnv = ... // see "Create a TableEnvironment" section
+// create a TableEnvironment
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 // register a Table
 tableEnv.registerTable("table1", ...)           // or
-tableEnv.registerTableSource("table2", ...)
-// register an output Table
-tableEnv.registerTableSink("outputTable", ...);
+tableEnv.registerTableSource("table2", ...)     // or
+tableEnv.registerCatalog("extCat", ...) 
 
 // create a Table from a Table API query
 val tapiResult = tableEnv.scan("table1").select(...)
-// create a Table from a SQL query
+// Create a Table from a SQL query
 val sqlResult  = tableEnv.sqlQuery("SELECT ... FROM table2 ...")
 
 // emit a Table API result Table to a TableSink, same for SQL result
-tapiResult.insertInto("outputTable")
+tapiResult.writeToSink(...)
 
 // execute
-tableEnv.execute("scala_job")
-
-{% endhighlight %}
-</div>
-
-<div data-lang="python" markdown="1">
-{% highlight python %}
-
-# create a TableEnvironment for specific planner batch or streaming
-table_env = ... # see "Create a TableEnvironment" section
-
-# register a Table
-table_env.register_table("table1", ...)           # or
-table_env.register_table_source("table2", ...)
-
-# register an output Table
-table_env.register_table_sink("outputTable", ...);
-
-# create a Table from a Table API query
-tapi_result = table_env.scan("table1").select(...)
-# create a Table from a SQL query
-sql_result  = table_env.sql_query("SELECT ... FROM table2 ...")
-
-# emit a Table API result Table to a TableSink, same for SQL result
-tapi_result.insert_into("outputTable")
-
-# execute
-table_env.execute("python_job")
+tableEnv.execute()
 
 {% endhighlight %}
 </div>
 </div>
 
-**Note:** Table API and SQL queries can be easily integrated with and embedded into DataStream or DataSet programs. Have a look at the [Integration with DataStream and DataSet API](#integration-with-datastream-and-dataset-api) section to learn how DataStreams and DataSets can be converted into Tables and vice versa.
+**Notes:** 
+1. Table API and SQL queries can be easily integrated with and embedded into DataStream programs. Have a look at the [Integration with DataStream API](#integration-with-datastream-api) section to learn how DataStreams and DataSets can be converted into Tables and vice versa.
+2. For bounded stream job, we should always use `TableEnvironment.execute()` to submit and run the job.
 
 {% top %}
 
@@ -136,175 +101,70 @@ Create a TableEnvironment
 The `TableEnvironment` is a central concept of the Table API and SQL integration. It is responsible for:
 
 * Registering a `Table` in the internal catalog
-* Registering an external catalog 
+* Registering a catalog 
 * Executing SQL queries
 * Registering a user-defined (scalar, table, or aggregation) function
-* Converting a `DataStream` or `DataSet` into a `Table`
+* Converting a `DataStream` into a `Table`
 * Holding a reference to an `ExecutionEnvironment` or `StreamExecutionEnvironment`
 
 A `Table` is always bound to a specific `TableEnvironment`. It is not possible to combine tables of different TableEnvironments in the same query, e.g., to join or union them.
 
-A `TableEnvironment` is created by calling the static `BatchTableEnvironment.create()` or `StreamTableEnvironment.create()` method with a `StreamExecutionEnvironment` or an `ExecutionEnvironment` and an optional `TableConfig`. The `TableConfig` can be used to configure the `TableEnvironment` or to customize the query optimization and translation process (see [Query Optimization](#query-optimization)).
-
-Make sure to choose the specific planner `BatchTableEnvironment`/`StreamTableEnvironment` that matches your programming language.
-
-If both planner jars are on the classpath (the default behavior), you should explicitly set which planner to use in the current program.
+A `TableEnvironment` is created by calling the static `TableEnvironment.getTableEnvironment()` method with a `StreamExecutionEnvironment` or an `ExecutionEnvironment` and an optional `TableConfig`. The `TableConfig` can be used to configure the `TableEnvironment` or to customize the query optimization and translation process (see [Query Optimization](#query-optimization)).
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
+// ***************
+// STREAMING QUERY
+// ***************
+StreamExecutionEnvironment sEnv = StreamExecutionEnvironment.getExecutionEnvironment();
+// create a TableEnvironment for streaming queries
+StreamTableEnvironment sTableEnv = TableEnvironment.getTableEnvironment(sEnv);
 
-// **********************
-// FLINK STREAMING QUERY
-// **********************
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.table.api.EnvironmentSettings;
-import org.apache.flink.table.api.java.StreamTableEnvironment;
-
-EnvironmentSettings fsSettings = EnvironmentSettings.newInstance().useOldPlanner().inStreamingMode().build();
-StreamExecutionEnvironment fsEnv = StreamExecutionEnvironment.getExecutionEnvironment();
-StreamTableEnvironment fsTableEnv = StreamTableEnvironment.create(fsEnv, fsSettings);
-// or TableEnvironment fsTableEnv = TableEnvironment.create(fsSettings);
-
-// ******************
-// FLINK BATCH QUERY
-// ******************
-import org.apache.flink.api.java.ExecutionEnvironment;
-import org.apache.flink.table.api.java.BatchTableEnvironment;
-
-ExecutionEnvironment fbEnv = ExecutionEnvironment.getExecutionEnvironment();
-BatchTableEnvironment fbTableEnv = BatchTableEnvironment.create(fbEnv);
-
-// **********************
-// BLINK STREAMING QUERY
-// **********************
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.table.api.EnvironmentSettings;
-import org.apache.flink.table.api.java.StreamTableEnvironment;
-
-StreamExecutionEnvironment bsEnv = StreamExecutionEnvironment.getExecutionEnvironment();
-EnvironmentSettings bsSettings = EnvironmentSettings.newInstance().useBlinkPlanner().inStreamingMode().build();
-StreamTableEnvironment bsTableEnv = StreamTableEnvironment.create(bsEnv, bsSettings);
-// or TableEnvironment bsTableEnv = TableEnvironment.create(bsSettings);
-
-// ******************
-// BLINK BATCH QUERY
-// ******************
-import org.apache.flink.table.api.EnvironmentSettings;
-import org.apache.flink.table.api.TableEnvironment;
-
-EnvironmentSettings bbSettings = EnvironmentSettings.newInstance().useBlinkPlanner().inBatchMode().build();
-TableEnvironment bbTableEnv = TableEnvironment.create(bbSettings);
-
+// ***********
+// BATCH QUERY
+// ***********
+StreamExecutionEnvironment sEnv = StreamExecutionEnvironment.getExecutionEnvironment();
+// create a TableEnvironment for batch queries
+BatchTableEnvironment bTableEnv = TableEnvironment.getBatchTableEnvironment(sEnv);
 {% endhighlight %}
 </div>
 
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
+// ***************
+// STREAMING QUERY
+// ***************
+val sEnv = StreamExecutionEnvironment.getExecutionEnvironment
+// create a TableEnvironment for streaming queries
+val sTableEnv = TableEnvironment.getTableEnvironment(sEnv)
 
-// **********************
-// FLINK STREAMING QUERY
-// **********************
-import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
-import org.apache.flink.table.api.EnvironmentSettings
-import org.apache.flink.table.api.scala.StreamTableEnvironment
-
-val fsSettings = EnvironmentSettings.newInstance().useOldPlanner().inStreamingMode().build()
-val fsEnv = StreamExecutionEnvironment.getExecutionEnvironment
-val fsTableEnv = StreamTableEnvironment.create(fsEnv, fsSettings)
-// or val fsTableEnv = TableEnvironment.create(fsSettings)
-
-// ******************
-// FLINK BATCH QUERY
-// ******************
-import org.apache.flink.api.scala.ExecutionEnvironment
-import org.apache.flink.table.api.scala.BatchTableEnvironment
-
-val fbEnv = ExecutionEnvironment.getExecutionEnvironment
-val fbTableEnv = BatchTableEnvironment.create(fbEnv)
-
-// **********************
-// BLINK STREAMING QUERY
-// **********************
-import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
-import org.apache.flink.table.api.EnvironmentSettings
-import org.apache.flink.table.api.scala.StreamTableEnvironment
-
-val bsEnv = StreamExecutionEnvironment.getExecutionEnvironment
-val bsSettings = EnvironmentSettings.newInstance().useBlinkPlanner().inStreamingMode().build()
-val bsTableEnv = StreamTableEnvironment.create(bsEnv, bsSettings)
-// or val bsTableEnv = TableEnvironment.create(bsSettings)
-
-// ******************
-// BLINK BATCH QUERY
-// ******************
-import org.apache.flink.table.api.{EnvironmentSettings, TableEnvironment}
-
-val bbSettings = EnvironmentSettings.newInstance().useBlinkPlanner().inBatchMode().build()
-val bbTableEnv = TableEnvironment.create(bbSettings)
-
-{% endhighlight %}
-</div>
-
-<div data-lang="python" markdown="1">
-{% highlight python %}
-
-# **********************
-# FLINK STREAMING QUERY
-# **********************
-from pyflink.datastream import StreamExecutionEnvironment
-from pyflink.table import StreamTableEnvironment, EnvironmentSettings
-
-f_s_env = StreamExecutionEnvironment.get_execution_environment()
-f_s_settings = EnvironmentSettings.new_instance().use_old_planner().in_streaming_mode().build()
-f_s_t_env = StreamTableEnvironment.create(f_s_env, environment_settings=f_s_settings)
-
-# ******************
-# FLINK BATCH QUERY
-# ******************
-from pyflink.dataset import ExecutionEnvironment
-from pyflink.table import BatchTableEnvironment
-
-f_b_env = ExecutionEnvironment.get_execution_environment()
-f_b_t_env = BatchTableEnvironment.create(f_b_env, table_config)
-
-# **********************
-# BLINK STREAMING QUERY
-# **********************
-from pyflink.datastream import StreamExecutionEnvironment
-from pyflink.table import StreamTableEnvironment, EnvironmentSettings
-
-b_s_env = StreamExecutionEnvironment.get_execution_environment()
-b_s_settings = EnvironmentSettings.new_instance().use_blink_planner().in_streaming_mode().build()
-b_s_t_env = StreamTableEnvironment.create(b_s_env, environment_settings=b_s_settings)
-
-# ******************
-# BLINK BATCH QUERY
-# ******************
-from pyflink.table import EnvironmentSettings, BatchTableEnvironment
-
-b_b_settings = EnvironmentSettings.new_instance().use_blink_planner().in_batch_mode().build()
-b_b_t_env = BatchTableEnvironment.create(environment_settings=b_b_settings)
-
+// ***********
+// BATCH QUERY
+// ***********
+val sEnv = StreamExecutionEnvironment.getExecutionEnvironment
+// create a TableEnvironment for batch queries
+val bTableEnv = TableEnvironment.getBatchTableEnvironment(sEnv)
 {% endhighlight %}
 </div>
 </div>
-
-**Note:** If there is only one planner jar in `/lib` directory, you can use `useAnyPlanner` (`use_any_planner` for python) to create specific `EnvironmentSettings`.
-
 
 {% top %}
 
-Register Tables in the Catalog
--------------------------------
+Register Flink Tables in TableEnvironment
+-----------------------------------
 
-A `TableEnvironment` maintains a catalog of tables which are registered by name. There are two types of tables, *input tables* and *output tables*. Input tables can be referenced in Table API and SQL queries and provide input data. Output tables can be used to emit the result of a Table API or SQL query to an external system.
+Tables registered via `TableEnvironment` will actually be registered to the default catalog and database in `CatalogManager`. Flink provides a built-in `FlinkInMemoryCatalog`, which implements `ReadableWritableCatalog`, as the default catalog. Users can also change the default catalog and database through both Table API or Flink SQL.
+
+Note that Flink tables may not be registered to all `ReadableWritableCatalog`. Currently Flink only supports registering tables in `FlinkInMemoryCatalog`.
+
+There are two types of Flink tables, *input tables* and *output tables*. Input tables can be referenced in Table API and SQL queries and provide input data. Output tables can be used to emit the result of a Table API or SQL query to an external system.
 
 An input table can be registered from various sources:
 
 * an existing `Table` object, usually the result of a Table API or SQL query.
 * a `TableSource`, which accesses external data, such as a file, database, or messaging system. 
-* a `DataStream` or `DataSet` from a DataStream (only for stream job) or DataSet (only for batch job translated from old planner) program. Registering a `DataStream` or `DataSet` is discussed in the [Integration with DataStream and DataSet API](#integration-with-datastream-and-dataset-api) section.
+* a `DataStream` from a DataStream program. Registering a `DataStream` is discussed in the [Integration with DataStream API](#integration-with-datastream-and-dataset-api) section.
 
 An output table can be registered using a `TableSink`.
 
@@ -315,13 +175,13 @@ A `Table` is registered in a `TableEnvironment` as follows:
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
-// get a TableEnvironment
-TableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+// get a StreamTableEnvironment, works for BatchTableEnvironment equivalently
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
-// table is the result of a simple projection query 
+// Table is the result of a simple projection query 
 Table projTable = tableEnv.scan("X").select(...);
 
-// register the Table projTable as table "projectedTable"
+// register the Table projTable as table "projectedX" to the default catalog and database of CatalogManager
 tableEnv.registerTable("projectedTable", projTable);
 {% endhighlight %}
 </div>
@@ -329,31 +189,18 @@ tableEnv.registerTable("projectedTable", projTable);
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get a TableEnvironment
-val tableEnv = ... // see "Create a TableEnvironment" section
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
-// table is the result of a simple projection query 
+// Table is the result of a simple projection query 
 val projTable: Table = tableEnv.scan("X").select(...)
 
-// register the Table projTable as table "projectedTable"
+// register the Table projTable as table "projectedX" to the default catalog and database of CatalogManager
 tableEnv.registerTable("projectedTable", projTable)
 {% endhighlight %}
 </div>
-
-<div data-lang="python" markdown="1">
-{% highlight python %}
-# get a TableEnvironment
-table_env = ... # see "Create a TableEnvironment" section
-
-# table is the result of a simple projection query 
-proj_table = table_env.scan("X").select(...)
-
-# register the Table projTable as table "projectedTable"
-table_env.register_table("projectedTable", proj_table)
-{% endhighlight %}
-</div>
 </div>
 
-**Note:** A registered `Table` is treated similarly to a `VIEW` as known from relational database systems, i.e., the query that defines the `Table` is not optimized but will be inlined when another query references the registered `Table`. If multiple queries reference the same registered `Table`, it will be inlined for each referencing query and executed multiple times, i.e., the result of the registered `Table` will *not* be shared.
+**Note:** A registered `Table` is treated similarly to a `VIEW` as known from relational database systems, i.e., the query that defines the `Table` is not optimized but will be inlined when another query references the registered `Table`. If multiple queries reference the same registered `Table`, it will be inlined for each referencing query and executed only once, i.e., the result of the registered `Table` will be shared.
 
 {% top %}
 
@@ -368,13 +215,13 @@ A `TableSource` is registered in a `TableEnvironment` as follows:
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
-// get a TableEnvironment
-TableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+// get a StreamTableEnvironment, works for BatchTableEnvironment equivalently
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 // create a TableSource
 TableSource csvSource = new CsvTableSource("/path/to/file", ...);
 
-// register the TableSource as table "CsvTable"
+// register the TableSource as table "CsvTable" to the default catalog and database of CatalogManager
 tableEnv.registerTableSource("CsvTable", csvSource);
 {% endhighlight %}
 </div>
@@ -382,31 +229,16 @@ tableEnv.registerTableSource("CsvTable", csvSource);
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get a TableEnvironment
-val tableEnv = ... // see "Create a TableEnvironment" section
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 // create a TableSource
 val csvSource: TableSource = new CsvTableSource("/path/to/file", ...)
 
-// register the TableSource as table "CsvTable"
+// register the TableSource as table "CsvTable" to the default catalog and database of CatalogManager
 tableEnv.registerTableSource("CsvTable", csvSource)
 {% endhighlight %}
 </div>
-
-<div data-lang="python" markdown="1">
-{% highlight python %}
-# get a TableEnvironment
-table_env = ... # see "Create a TableEnvironment" section
-
-# create a TableSource
-csv_source = CsvTableSource("/path/to/file", ...)
-
-# register the TableSource as table "csvTable"
-table_env.register_table_source("csvTable", csv_source)
-{% endhighlight %}
 </div>
-</div>
-
-**Note:** A `TableEnvironment` used for Blink planner only accepts `StreamTableSource`, `LookupableTableSource` and `InputFormatTableSource`, and a `StreamTableSource` used for Blink planner on batch must be bounded.
 
 {% top %}
 
@@ -421,17 +253,17 @@ A `TableSink` is registered in a `TableEnvironment` as follows:
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
-// get a TableEnvironment
-TableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+// get a StreamTableEnvironment, works for BatchTableEnvironment equivalently
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 // create a TableSink
 TableSink csvSink = new CsvTableSink("/path/to/file", ...);
 
 // define the field names and types
 String[] fieldNames = {"a", "b", "c"};
-TypeInformation[] fieldTypes = {Types.INT, Types.STRING, Types.LONG};
+DataType[] fieldTypes = {DataTypes.INT, DataTypes.STRING, DataTypes.LONG};
 
-// register the TableSink as table "CsvSinkTable"
+// register the TableSink as table "CsvSinkTable" to the default catalog and database of CatalogManager
 tableEnv.registerTableSink("CsvSinkTable", fieldNames, fieldTypes, csvSink);
 {% endhighlight %}
 </div>
@@ -439,41 +271,29 @@ tableEnv.registerTableSink("CsvSinkTable", fieldNames, fieldTypes, csvSink);
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get a TableEnvironment
-val tableEnv = ... // see "Create a TableEnvironment" section
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 // create a TableSink
 val csvSink: TableSink = new CsvTableSink("/path/to/file", ...)
 
 // define the field names and types
 val fieldNames: Array[String] = Array("a", "b", "c")
-val fieldTypes: Array[TypeInformation[_]] = Array(Types.INT, Types.STRING, Types.LONG)
+val fieldTypes: Array[DataType] = Array(DataTypes.INT, DataTypes.STRING, DataTypes.LONG)
 
-// register the TableSink as table "CsvSinkTable"
+// register the TableSink as table "CsvSinkTable" to the default catalog and database of CatalogManager
 tableEnv.registerTableSink("CsvSinkTable", fieldNames, fieldTypes, csvSink)
-{% endhighlight %}
-</div>
-
-<div data-lang="python" markdown="1">
-{% highlight python %}
-# get a TableEnvironment
-table_env = ... # see "Create a TableEnvironment" section
-
-# define the field names and types
-field_names = ["a", "b", "c"]
-field_types = [DataTypes.INT(), DataTypes.STRING(), DataTypes.BIGINT()]
-
-# create a TableSink
-csv_sink = CsvTableSink(field_names, field_types, "/path/to/file", ...)
-
-# register the TableSink as table "CsvSinkTable"
-table_env.register_table_sink("CsvSinkTable", csv_sink)
 {% endhighlight %}
 </div>
 </div>
 
 {% top %}
 
-Query a Table
+Catalogs
+----------------------------
+
+For catalogs, see [Catalog]({{ site.baseurl }}/dev/table/catalog.html)
+
+Query a Table 
 -------------
 
 ### Table API
@@ -489,8 +309,8 @@ The following example shows a simple Table API aggregation query:
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
-// get a TableEnvironment
-TableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+// get a StreamTableEnvironment, works for BatchTableEnvironment equivalently
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 // register Orders table
 
@@ -510,7 +330,7 @@ Table revenue = orders
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get a TableEnvironment
-val tableEnv = ... // see "Create a TableEnvironment" section
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 // register Orders table
 
@@ -528,26 +348,6 @@ val revenue = orders
 
 **Note:** The Scala Table API uses Scala Symbols, which start with a single tick (`'`) to reference the attributes of a `Table`. The Table API uses Scala implicits. Make sure to import `org.apache.flink.api.scala._` and `org.apache.flink.table.api.scala._` in order to use Scala implicit conversions.
 </div>
-
-<div data-lang="python" markdown="1">
-{% highlight python %}
-# get a TableEnvironment
-table_env = # see "Create a TableEnvironment" section
-
-# register Orders table
-
-# scan registered Orders table
-orders = table_env.scan("Orders")
-# compute revenue for all customers from France
-revenue = orders \
-    .filter("cCountry === 'FRANCE'") \
-    .group_by("cID, cName") \
-    .select("cID, cName, revenue.sum AS revSum")
-
-# emit or convert Table
-# execute query
-{% endhighlight %}
-</div>
 </div>
 
 {% top %}
@@ -563,8 +363,8 @@ The following example shows how to specify a query and return the result as a `T
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
-// get a TableEnvironment
-TableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+// get a StreamTableEnvironment, works for BatchTableEnvironment equivalently
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 // register Orders table
 
@@ -584,7 +384,7 @@ Table revenue = tableEnv.sqlQuery(
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get a TableEnvironment
-val tableEnv = ... // see "Create a TableEnvironment" section
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 // register Orders table
 
@@ -601,26 +401,6 @@ val revenue = tableEnv.sqlQuery("""
 {% endhighlight %}
 
 </div>
-
-<div data-lang="python" markdown="1">
-{% highlight python %}
-# get a TableEnvironment
-table_env = ... # see "Create a TableEnvironment" section
-
-# register Orders table
-
-# compute revenue for all customers from France
-revenue = table_env.sql_query(
-    "SELECT cID, cName, SUM(revenue) AS revSum "
-    "FROM Orders "
-    "WHERE cCountry = 'FRANCE' "
-    "GROUP BY cID, cName"
-)
-
-# emit or convert Table
-# execute query
-{% endhighlight %}
-</div>
 </div>
 
 The following example shows how to specify an update query that inserts its result into a registered table.
@@ -628,8 +408,8 @@ The following example shows how to specify an update query that inserts its resu
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
-// get a TableEnvironment
-TableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+// get a StreamTableEnvironment, works for BatchTableEnvironment equivalently
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 // register "Orders" table
 // register "RevenueFrance" output table
@@ -650,7 +430,7 @@ tableEnv.sqlUpdate(
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get a TableEnvironment
-val tableEnv = ... // see "Create a TableEnvironment" section
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 // register "Orders" table
 // register "RevenueFrance" output table
@@ -667,27 +447,6 @@ tableEnv.sqlUpdate("""
 // execute query
 {% endhighlight %}
 
-</div>
-
-<div data-lang="python" markdown="1">
-{% highlight python %}
-# get a TableEnvironment
-table_env = ... # see "Create a TableEnvironment" section
-
-# register "Orders" table
-# register "RevenueFrance" output table
-
-# compute revenue for all customers from France and emit to "RevenueFrance"
-table_env.sql_update(
-    "INSERT INTO RevenueFrance "
-    "SELECT cID, cName, SUM(revenue) AS revSum "
-    "FROM Orders "
-    "WHERE cCountry = 'FRANCE' "
-    "GROUP BY cID, cName"
-)
-
-# execute query
-{% endhighlight %}
 </div>
 </div>
 
@@ -711,27 +470,35 @@ A batch `Table` can only be written to a `BatchTableSink`, while a streaming `Ta
 
 Please see the documentation about [Table Sources & Sinks]({{ site.baseurl }}/dev/table/sourceSinks.html) for details about available sinks and instructions for how to implement a custom `TableSink`.
 
-The `Table.insertInto(String tableName)` method emits the `Table` to a registered `TableSink`. The method looks up the `TableSink` from the catalog by the name and validates that the schema of the `Table` is identical to the schema of the `TableSink`. 
+There are two ways to emit a table:
+
+1. The `Table.writeToSink(TableSink sink)` method emits the table using the provided `TableSink` and automatically configures the sink with the schema of the table to emit.
+2. The `Table.insertInto(String sinkTable)` method looks up a `TableSink` that was registered with a specific schema under the provided name in the `TableEnvironment`'s catalog. The schema of the table to emit is validated against the schema of the registered `TableSink`.
 
 The following examples shows how to emit a `Table`:
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
-// get a TableEnvironment
-TableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
-
-// create a TableSink
-TableSink sink = new CsvTableSink("/path/to/file", fieldDelim = "|");
-
-// register the TableSink with a specific schema
-String[] fieldNames = {"a", "b", "c"};
-TypeInformation[] fieldTypes = {Types.INT, Types.STRING, Types.LONG};
-tableEnv.registerTableSink("CsvSinkTable", fieldNames, fieldTypes, sink);
+// get a StreamTableEnvironment, works for BatchTableEnvironment equivalently
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 // compute a result Table using Table API operators and/or SQL queries
 Table result = ...
-// emit the result Table to the registered TableSink
+
+// create a TableSink
+TableSink sink = new CsvTableSink("/path/to/file", "|");
+
+// METHOD 1:
+//   Emit the result Table to the TableSink via the writeToSink() method
+result.writeToSink(sink);
+
+// METHOD 2:
+//   Register the TableSink with a specific schema
+String[] fieldNames = {"a", "b", "c"};
+DataType[] fieldTypes = {DataTypes.INT, DataTypes.STRING, DataTypes.LONG};
+tableEnv.registerTableSink("CsvSinkTable", fieldNames, fieldTypes, sink);
+//   Emit the result Table to the registered TableSink via the insertInto() method
 result.insertInto("CsvSinkTable");
 
 // execute the program
@@ -741,46 +508,27 @@ result.insertInto("CsvSinkTable");
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get a TableEnvironment
-val tableEnv = ... // see "Create a TableEnvironment" section
-
-// create a TableSink
-val sink: TableSink = new CsvTableSink("/path/to/file", fieldDelim = "|")
-
-// register the TableSink with a specific schema
-val fieldNames: Array[String] = Array("a", "b", "c")
-val fieldTypes: Array[TypeInformation] = Array(Types.INT, Types.STRING, Types.LONG)
-tableEnv.registerTableSink("CsvSinkTable", fieldNames, fieldTypes, sink)
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 // compute a result Table using Table API operators and/or SQL queries
 val result: Table = ...
 
-// emit the result Table to the registered TableSink
+// create a TableSink
+val sink: TableSink = new CsvTableSink("/path/to/file", fieldDelim = "|")
+
+// METHOD 1:
+//   Emit the result Table to the TableSink via the writeToSink() method
+result.writeToSink(sink)
+
+// METHOD 2:
+//   Register the TableSink with a specific schema
+val fieldNames: Array[String] = Array("a", "b", "c")
+val fieldTypes: Array[DataType] = Array(DataTypes.INT, DataTypes.STRING, DataTypes.LONG)
+tableEnv.registerTableSink("CsvSinkTable", fieldNames, fieldTypes, sink)
+//   Emit the result Table to the registered TableSink via the insertInto() method
 result.insertInto("CsvSinkTable")
 
 // execute the program
-{% endhighlight %}
-</div>
-
-<div data-lang="python" markdown="1">
-{% highlight python %}
-# get a TableEnvironment
-table_env = ... # see "Create a TableEnvironment" section
-
-field_names = ["a", "b", "c"]
-field_types = [DataTypes.INT(), DataTypes.STRING(), DataTypes.BIGINT()]
-
-# create a TableSink
-sink = CsvTableSink(field_names, field_types, "/path/to/file", "|")
-
-table_env.register_table_sink("CsvSinkTable", sink)
-
-# compute a result Table using Table API operators and/or SQL queries
-result = ...
-
-# emit the result Table to the registered TableSink
-result.insert_into("CsvSinkTable")
-
-# execute the program
 {% endhighlight %}
 </div>
 </div>
@@ -791,72 +539,42 @@ result.insert_into("CsvSinkTable")
 Translate and Execute a Query
 -----------------------------
 
-The behavior of translating and executing a query is different for the two planners.
+Table API and SQL queries are translated into [DataStream]({{ site.baseurl }}/dev/datastream_api.html) programs no matter whether their input is a streaming or batch input. A query is internally represented as a logical query plan and is translated in two phases: 
 
-<div class="codetabs" markdown="1">
-<div data-lang="Old planner" markdown="1">
-Table API and SQL queries are translated into [DataStream]({{ site.baseurl }}/dev/datastream_api.html) or [DataSet]({{ site.baseurl }}/dev/batch) programs depending on whether their input is a streaming or batch input. A query is internally represented as a logical query plan and is translated in two phases:
-
-1. Optimization of the logical plan
-2. Translation into a DataStream or DataSet program
+1. optimization of the logical plan, 
+2. translation into a DataStream program.
 
 A Table API or SQL query is translated when:
 
-* a `Table` is emitted to a `TableSink`, i.e., when `Table.insertInto()` is called.
+* a `Table` is emitted to a `TableSink`, i.e., when `Table.writeToSink()` or `Table.insertInto()` is called.
 * a SQL update query is specified, i.e., when `TableEnvironment.sqlUpdate()` is called.
-* a `Table` is converted into a `DataStream` or `DataSet` (see [Integration with DataStream and DataSet API](#integration-with-datastream-and-dataset-api)).
+* a `Table` is converted into a `DataStream`(see [Integration with DataStream API](#integration-with-datastream-api)).
 
-Once translated, a Table API or SQL query is handled like a regular DataStream or DataSet program and is executed when `StreamExecutionEnvironment.execute()` or `ExecutionEnvironment.execute()` is called.
-
-</div>
-
-<div data-lang="Blink planner" markdown="1">
-Table API and SQL queries are translated into [DataStream]({{ site.baseurl }}/dev/datastream_api.html) programs whether their input is streaming or batch. A query is internally represented as a logical query plan and is translated in two phases:
-
-1. Optimization of the logical plan,
-2. Translation into a DataStream program.
-
-The behavior of translating  a query is different for `TableEnvironment` and `StreamTableEnvironment`.
-
-For `TableEnvironment`, A Table API or SQL query is translated when `TableEnvironment.execute()` is called, because `TableEnvironment` will optimize multiple-sinks into one DAG.
-
-while for `StreamTableEnvironment`, A Table API or SQL query is translated when:
-
-* a `Table` is emitted to a `TableSink`, i.e., when `Table.insertInto()` is called.
-* a SQL update query is specified, i.e., when `TableEnvironment.sqlUpdate()` is called.
-* a `Table` is converted into a `DataStream`.
-
-Once translated, a Table API or SQL query is handled like a regular DataStream program and is executed when `TableEnvironment.execute()` or `StreamExecutionEnvironment.execute()` is called.
-
-</div>
-</div>
+Once translated, a Table API or SQL query is handled like a regular DataStream program and is executed when `StreamExecutionEnvironment.execute()` is called.
 
 {% top %}
 
-Integration with DataStream and DataSet API
+Integration with DataStream API
 -------------------------------------------
 
-Both planners on stream can integrate with the `DataStream` API. Only old planner can integrate with the `DataSet API`, Blink planner on batch could not be combined with both.
-**Note:** The `DataSet` API discussed below is only relevant for the old planner on batch.
+Table API and SQL queries can be easily integrated with and embedded into [DataStream]({{ site.baseurl }}/dev/datastream_api.html) programs. For instance, it is possible to query an external table (for example from a RDBMS), do some pre-processing, such as filtering, projecting, aggregating, or joining with meta data, and then further process the data with either the DataStream API (and any of the libraries built on top of these APIs, such as CEP or Gelly). Inversely, a Table API or SQL query can also be applied on the result of a DataStream program.
 
-Table API and SQL queries can be easily integrated with and embedded into [DataStream]({{ site.baseurl }}/dev/datastream_api.html) and [DataSet]({{ site.baseurl }}/dev/batch) programs. For instance, it is possible to query an external table (for example from a RDBMS), do some pre-processing, such as filtering, projecting, aggregating, or joining with meta data, and then further process the data with either the DataStream or DataSet API (and any of the libraries built on top of these APIs, such as CEP or Gelly). Inversely, a Table API or SQL query can also be applied on the result of a DataStream or DataSet program.
-
-This interaction can be achieved by converting a `DataStream` or `DataSet` into a `Table` and vice versa. In this section, we describe how these conversions are done.
+This interaction can be achieved by converting a `DataStream` into a `Table` and vice versa. In this section, we describe how these conversions are done.
 
 ### Implicit Conversion for Scala
 
-The Scala Table API features implicit conversions for the `DataSet`, `DataStream`, and `Table` classes. These conversions are enabled by importing the package `org.apache.flink.table.api.scala._` in addition to `org.apache.flink.api.scala._` for the Scala DataStream API.
+The Scala Table API features implicit conversions for the `DataStream`, and `Table` classes. These conversions are enabled by importing the package `org.apache.flink.table.api.scala._` in addition to `org.apache.flink.api.scala._` for the Scala DataStream API.
 
-### Register a DataStream or DataSet as Table
+### Register a DataStream as Table
 
-A `DataStream` or `DataSet` can be registered in a `TableEnvironment` as a Table. The schema of the resulting table depends on the data type of the registered `DataStream` or `DataSet`. Please check the section about [mapping of data types to table schema](#mapping-of-data-types-to-table-schema) for details.
+A `DataStream` can be registered in a `TableEnvironment` as a Table. The schema of the resulting table depends on the data type of the registered `DataStream`. Please check the section about [mapping of data types to table schema](#mapping-of-data-types-to-table-schema) for details.
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
 // get StreamTableEnvironment
-// registration of a DataSet in a BatchTableEnvironment is equivalent
-StreamTableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+// registration of a DataStream in a BatchTableEnvironment is equivalent
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 DataStream<Tuple2<Long, String>> stream = ...
 
@@ -871,8 +589,8 @@ tableEnv.registerDataStream("myTable2", stream, "myLong, myString");
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get TableEnvironment 
-// registration of a DataSet is equivalent
-val tableEnv: StreamTableEnvironment = ... // see "Create a TableEnvironment" section
+// registration of a bounded DataStream is equivalent
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 val stream: DataStream[(Long, String)] = ...
 
@@ -889,16 +607,16 @@ tableEnv.registerDataStream("myTable2", stream, 'myLong, 'myString)
 
 {% top %}
 
-### Convert a DataStream or DataSet into a Table
+### Convert a DataStream into a Table
 
-Instead of registering a `DataStream` or `DataSet` in a `TableEnvironment`, it can also be directly converted into a `Table`. This is convenient if you want to use the Table in a Table API query. 
+Instead of registering a `DataStream` into a `TableEnvironment`, it can also be directly converted into a `Table`. This is convenient if you want to use the Table in a Table API query. 
 
+#### Convert a DataStream into a table(unbounded)
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
 // get StreamTableEnvironment
-// registration of a DataSet in a BatchTableEnvironment is equivalent
-StreamTableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 DataStream<Tuple2<Long, String>> stream = ...
 
@@ -912,9 +630,8 @@ Table table2 = tableEnv.fromDataStream(stream, "myLong, myString");
 
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
-// get TableEnvironment
-// registration of a DataSet is equivalent
-val tableEnv = ... // see "Create a TableEnvironment" section
+// get StreamTableEnvironment
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 val stream: DataStream[(Long, String)] = ...
 
@@ -927,13 +644,46 @@ val table2: Table = tableEnv.fromDataStream(stream, 'myLong, 'myString)
 </div>
 </div>
 
+#### Convert a DataStream into a table(bounded)
+<div class="codetabs" markdown="1">
+<div data-lang="java" markdown="1">
+{% highlight java %}
+// get BatchTableEnvironment
+BatchTableEnvironment tableEnv = TableEnvironment.getBatchTableEnvironment(env);
+
+DataStream<Tuple2<Long, String>> stream = ...
+
+// Convert the DataStream into a Table with default fields "f0", "f1"
+Table table1 = tableEnv.fromBoundedStream(stream);
+
+// Convert the DataStream into a Table with fields "myLong", "myString"
+Table table2 = tableEnv.fromBoundedStream(stream, "myLong, myString");
+{% endhighlight %}
+</div>
+
+<div data-lang="scala" markdown="1">
+{% highlight scala %}
+// get BatchTableEnvironment
+val tableEnv = TableEnvironment.getBatchTableEnvironment(env)
+
+val stream: DataStream[(Long, String)] = ...
+
+// convert the DataStream into a Table with default fields '_1, '_2
+val table1: Table = tableEnv.fromBoundedStream(stream)
+
+// convert the DataStream into a Table with fields 'myLong, 'myString
+val table2: Table = tableEnv.fromBoundedStream(stream, 'myLong, 'myString)
+{% endhighlight %}
+</div>
+</div>
+
 {% top %}
 
-### Convert a Table into a DataStream or DataSet
+### Convert a Table into a DataStream
 
-A `Table` can be converted into a `DataStream` or `DataSet`. In this way, custom DataStream or DataSet programs can be run on the result of a Table API or SQL query.
+A `Table` can be converted into a `DataStream`. In this way, custom DataStream program can be run on the result of a Table API or SQL query.
 
-When converting a `Table` into a `DataStream` or `DataSet`, you need to specify the data type of the resulting `DataStream` or `DataSet`, i.e., the data type into which the rows of the `Table` are to be converted. Often the most convenient conversion type is `Row`. The following list gives an overview of the features of the different options:
+When converting a `Table` into a `DataStream`, you need to specify the data type of the resulting `DataStream`, i.e., the data type into which the rows of the `Table` are to be converted. Often the most convenient conversion type is `Row`. The following list gives an overview of the features of the different options:
 
 - **Row**: fields are mapped by position, arbitrary number of fields, support for `null` values, no type-safe access.
 - **POJO**: fields are mapped by name (POJO fields must be named as `Table` fields), arbitrary number of fields, support for `null` values, type-safe access.
@@ -941,7 +691,7 @@ When converting a `Table` into a `DataStream` or `DataSet`, you need to specify 
 - **Tuple**: fields are mapped by position, limitation to 22 (Scala) or 25 (Java) fields, no support for `null` values, type-safe access.
 - **Atomic Type**: `Table` must have a single field, no support for `null` values, type-safe access.
 
-#### Convert a Table into a DataStream
+#### Convert a Table into a DataStream(unbounded)
 
 A `Table` that is the result of a streaming query will be updated dynamically, i.e., it is changing as new records arrive on the query's input streams. Hence, the `DataStream` into which such a dynamic query is converted needs to encode the updates of the table. 
 
@@ -954,7 +704,7 @@ There are two modes to convert a `Table` into a `DataStream`:
 <div data-lang="java" markdown="1">
 {% highlight java %}
 // get StreamTableEnvironment. 
-StreamTableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 // Table with two fields (String name, Integer age)
 Table table = ...
@@ -983,8 +733,8 @@ DataStream<Tuple2<Boolean, Row>> retractStream =
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get TableEnvironment. 
-// registration of a DataSet is equivalent
-val tableEnv: StreamTableEnvironment = ... // see "Create a TableEnvironment" section
+// registration of a bounded DataStream is equivalent
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 // Table with two fields (String name, Integer age)
 val table: Table = ...
@@ -1005,47 +755,41 @@ val retractStream: DataStream[(Boolean, Row)] = tableEnv.toRetractStream[Row](ta
 </div>
 </div>
 
-**Note:** A detailed discussion about dynamic tables and their properties is given in the [Dynamic Tables](streaming/dynamic_tables.html) document.
+**Note:** A detailed discussion about dynamic tables and their properties is given in the [Streaming Queries]({{ site.baseurl }}/dev/table/streaming.html) document.
 
-#### Convert a Table into a DataSet
+#### Convert a Table into a DataStream(bounded)
 
-A `Table` is converted into a `DataSet` as follows:
+A `Table` is converted into a bounded `DataStream` as follows:
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
 // get BatchTableEnvironment
-BatchTableEnvironment tableEnv = BatchTableEnvironment.create(env);
+BatchTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 // Table with two fields (String name, Integer age)
 Table table = ...
 
-// convert the Table into a DataSet of Row by specifying a class
-DataSet<Row> dsRow = tableEnv.toDataSet(table, Row.class);
-
-// convert the Table into a DataSet of Tuple2<String, Integer> via a TypeInformation
-TupleTypeInfo<Tuple2<String, Integer>> tupleType = new TupleTypeInfo<>(
-  Types.STRING(),
-  Types.INT());
-DataSet<Tuple2<String, Integer>> dsTuple = 
-  tableEnv.toDataSet(table, tupleType);
+// convert the Table into a bounded DataStream by specifying a BatchTableSink.
+DataStream<Row> dsRow = tableEnv.toBoundedStream(table, tSink);
 {% endhighlight %}
 </div>
 
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get TableEnvironment 
-// registration of a DataSet is equivalent
-val tableEnv = BatchTableEnvironment.create(env)
+// registration of a bounded DataStream is equivalent
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 // Table with two fields (String name, Integer age)
 val table: Table = ...
+val tableSink: BatchTableSink = ...
 
-// convert the Table into a DataSet of Row
-val dsRow: DataSet[Row] = tableEnv.toDataSet[Row](table)
+// convert the Table into a bounded DataStream of Row
+val dsRow: DataStream[Row] = tableEnv.toBoundedStream[Row](table, tableSink)
 
-// convert the Table into a DataSet of Tuple2[String, Int]
-val dsTuple: DataSet[(String, Int)] = tableEnv.toDataSet[(String, Int)](table)
+// convert the Table into a bounded DataStream of Tuple2[String, Int]
+val dsTuple: DataStream[(String, Int)] = tableEnv.toBoundedStream[(String, Int)](table, tableSink)
 {% endhighlight %}
 </div>
 </div>
@@ -1054,13 +798,13 @@ val dsTuple: DataSet[(String, Int)] = tableEnv.toDataSet[(String, Int)](table)
 
 ### Mapping of Data Types to Table Schema
 
-Flink's DataStream and DataSet APIs support very diverse types. Composite types such as Tuples (built-in Scala and Flink Java tuples), POJOs, Scala case classes, and Flink's Row type allow for nested data structures with multiple fields that can be accessed in table expressions. Other types are treated as atomic types. In the following, we describe how the Table API converts these types into an internal row representation and show examples of converting a `DataStream` into a `Table`.
+Flink's DataStream APIs support very diverse types. Composite types such as Tuples (built-in Scala and Flink Java tuples), POJOs, Scala case classes, and Flink's Row type allow for nested data structures with multiple fields that can be accessed in table expressions. Other types are treated as atomic types. In the following, we describe how the Table API converts these types into an internal row representation and show examples of converting a `DataStream` into a `Table`.
 
 The mapping of a data type to a table schema can happen in two ways: **based on the field positions** or **based on the field names**.
 
 **Position-based Mapping**
 
-Position-based mapping can be used to give fields a more meaningful name while keeping the field order. This mapping is available for composite data types *with a defined field order* as well as atomic types. Composite data types such as tuples, rows, and case classes have such a field order. However, fields of a POJO must be mapped based on the field names (see next section). Fields can be projected out but can't be renamed using an alias `as`.
+Position-based mapping can be used to give fields a more meaningful name while keeping the field order. This mapping is available for composite data types *with a defined field order* as well as atomic types. Composite data types such as tuples, rows, and case classes have such a field order. However, fields of a POJO must be mapped based on the field names (see next section).
 
 When defining a position-based mapping, the specified names must not exist in the input data type, otherwise the API will assume that the mapping should happen based on the field names. If no field names are specified, the default field names and field order of the composite type are used or `f0` for atomic types. 
 
@@ -1068,15 +812,12 @@ When defining a position-based mapping, the specified names must not exist in th
 <div data-lang="java" markdown="1">
 {% highlight java %}
 // get a StreamTableEnvironment, works for BatchTableEnvironment equivalently
-StreamTableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section;
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 DataStream<Tuple2<Long, Integer>> stream = ...
 
 // convert DataStream into Table with default field names "f0" and "f1"
 Table table = tableEnv.fromDataStream(stream);
-
-// convert DataStream into Table with field "myLong" only
-Table table = tableEnv.fromDataStream(stream, "myLong");
 
 // convert DataStream into Table with field names "myLong" and "myInt"
 Table table = tableEnv.fromDataStream(stream, "myLong, myInt");
@@ -1086,18 +827,15 @@ Table table = tableEnv.fromDataStream(stream, "myLong, myInt");
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get a TableEnvironment
-val tableEnv: StreamTableEnvironment = ... // see "Create a TableEnvironment" section
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 val stream: DataStream[(Long, Int)] = ...
 
 // convert DataStream into Table with default field names "_1" and "_2"
 val table: Table = tableEnv.fromDataStream(stream)
 
-// convert DataStream into Table with field "myLong" only
-val table: Table = tableEnv.fromDataStream(stream, 'myLong)
-
 // convert DataStream into Table with field names "myLong" and "myInt"
-val table: Table = tableEnv.fromDataStream(stream, 'myLong, 'myInt)
+val table: Table = tableEnv.fromDataStream(stream, 'myLong 'myInt)
 {% endhighlight %}
 </div>
 </div>
@@ -1112,7 +850,7 @@ If no field names are specified, the default field names and field order of the 
 <div data-lang="java" markdown="1">
 {% highlight java %}
 // get a StreamTableEnvironment, works for BatchTableEnvironment equivalently
-StreamTableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 DataStream<Tuple2<Long, Integer>> stream = ...
 
@@ -1133,7 +871,7 @@ Table table = tableEnv.fromDataStream(stream, "f1 as myInt, f0 as myLong");
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get a TableEnvironment
-val tableEnv: StreamTableEnvironment = ... // see "Create a TableEnvironment" section
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 val stream: DataStream[(Long, Int)] = ...
 
@@ -1154,13 +892,13 @@ val table: Table = tableEnv.fromDataStream(stream, '_2 as 'myInt, '_1 as 'myLong
 
 #### Atomic Types
 
-Flink treats primitives (`Integer`, `Double`, `String`) or generic types (types that cannot be analyzed and decomposed) as atomic types. A `DataStream` or `DataSet` of an atomic type is converted into a `Table` with a single attribute. The type of the attribute is inferred from the atomic type and the name of the attribute can be specified.
+Flink treats primitives (`Integer`, `Double`, `String`) or generic types (types that cannot be analyzed and decomposed) as atomic types. A `DataStream` of an atomic type is converted into a `Table` with a single attribute. The type of the attribute is inferred from the atomic type and the name of the attribute can be specified.
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
 // get a StreamTableEnvironment, works for BatchTableEnvironment equivalently
-StreamTableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 DataStream<Long> stream = ...
 
@@ -1175,7 +913,7 @@ Table table = tableEnv.fromDataStream(stream, "myLong");
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get a TableEnvironment
-val tableEnv: StreamTableEnvironment = ... // see "Create a TableEnvironment" section
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 val stream: DataStream[Long] = ...
 
@@ -1190,13 +928,13 @@ val table: Table = tableEnv.fromDataStream(stream, 'myLong)
 
 #### Tuples (Scala and Java) and Case Classes (Scala only)
 
-Flink supports Scala's built-in tuples and provides its own tuple classes for Java. DataStreams and DataSets of both kinds of tuples can be converted into tables. Fields can be renamed by providing names for all fields (mapping based on position). If no field names are specified, the default field names are used. If the original field names (`f0`, `f1`, ... for Flink Tuples and `_1`, `_2`, ... for Scala Tuples) are referenced, the API assumes that the mapping is name-based instead of position-based. Name-based mapping allows for reordering fields and projection with alias (`as`).
+Flink supports Scala's built-in tuples and provides its own tuple classes for Java. DataStreams of both kinds of tuples can be converted into tables. Fields can be renamed by providing names for all fields (mapping based on position). If no field names are specified, the default field names are used. If the original field names (`f0`, `f1`, ... for Flink Tuples and `_1`, `_2`, ... for Scala Tuples) are referenced, the API assumes that the mapping is name-based instead of position-based. Name-based mapping allows for reordering fields and projection with alias (`as`).
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
 // get a StreamTableEnvironment, works for BatchTableEnvironment equivalently
-StreamTableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 DataStream<Tuple2<Long, String>> stream = ...
 
@@ -1220,7 +958,7 @@ Table table = tableEnv.fromDataStream(stream, "f1 as 'myString', f0 as 'myLong'"
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get a TableEnvironment
-val tableEnv: StreamTableEnvironment = ... // see "Create a TableEnvironment" section
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 val stream: DataStream[(Long, String)] = ...
 
@@ -1260,13 +998,13 @@ val table: Table = tableEnv.fromDataStream(stream, 'age as 'myAge, 'name as 'myN
 
 Flink supports POJOs as composite types. The rules for what determines a POJO are documented [here]({{ site.baseurl }}/dev/api_concepts.html#pojos).
 
-When converting a POJO `DataStream` or `DataSet` into a `Table` without specifying field names, the names of the original POJO fields are used. The name mapping requires the original names and cannot be done by positions. Fields can be renamed using an alias (with the `as` keyword), reordered, and projected.
+When converting a POJO `DataStream` into a `Table` without specifying field names, the names of the original POJO fields are used. The name mapping requires the original names and cannot be done by positions. Fields can be renamed using an alias (with the `as` keyword), reordered, and projected.
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
 // get a StreamTableEnvironment, works for BatchTableEnvironment equivalently
-StreamTableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 // Person is a POJO with fields "name" and "age"
 DataStream<Person> stream = ...
@@ -1288,7 +1026,7 @@ Table table = tableEnv.fromDataStream(stream, "name as myName");
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get a TableEnvironment
-val tableEnv: StreamTableEnvironment = ... // see "Create a TableEnvironment" section
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 // Person is a POJO with field names "name" and "age"
 val stream: DataStream[Person] = ...
@@ -1310,13 +1048,13 @@ val table: Table = tableEnv.fromDataStream(stream, 'name as 'myName)
 
 #### Row
 
-The `Row` data type supports an arbitrary number of fields and fields with `null` values. Field names can be specified via a `RowTypeInfo` or when converting a `Row` `DataStream` or `DataSet` into a `Table`. The row type supports mapping of fields by position and by name. Fields can be renamed by providing names for all fields (mapping based on position) or selected individually for projection/ordering/renaming (mapping based on name).
+The `Row` data type supports an arbitrary number of fields and fields with `null` values. Field names can be specified via a `RowTypeInfo` or when converting a `Row` `DataStream` into a `Table`. The row type supports mapping of fields by position and by name. Fields can be renamed by providing names for all fields (mapping based on position) or selected individually for projection/ordering/renaming (mapping based on name).
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
 // get a StreamTableEnvironment, works for BatchTableEnvironment equivalently
-StreamTableEnvironment tableEnv = ...; // see "Create a TableEnvironment" section
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 // DataStream of Row with two fields "name" and "age" specified in `RowTypeInfo`
 DataStream<Row> stream = ...
@@ -1341,7 +1079,7 @@ Table table = tableEnv.fromDataStream(stream, "name as myName");
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 // get a TableEnvironment
-val tableEnv: StreamTableEnvironment = ... // see "Create a TableEnvironment" section
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 // DataStream of Row with two fields "name" and "age" specified in `RowTypeInfo`
 val stream: DataStream[Row] = ...
@@ -1370,57 +1108,106 @@ val table: Table = tableEnv.fromDataStream(stream, 'name as 'myName)
 Query Optimization
 ------------------
 
-<div class="codetabs" markdown="1">
-<div data-lang="Old planner" markdown="1">
+The foundation of Apache Flink query optimization is Apache Calcite. In addition to apply Calcite in optimization, Flink also does a lot to enhance it.
 
-Apache Flink leverages Apache Calcite to optimize and translate queries. The optimization currently performed include projection and filter push-down, subquery decorrelation, and other kinds of query rewriting. Old planner does not yet optimize the order of joins, but executes them in the same order as defined in the query (order of Tables in the `FROM` clause and/or order of join predicates in the `WHERE` clause).
+Fist of all, Flink does a series of rule-based optimization and cost-based optimization including:
+* special subquery rewriting, including two part: 1. converts IN and EXISTS into left semi-join 2.converts NOT IN and NOT EXISTS into left anti-join. Note: only IN/EXISTS/NOT IN/NOT EXISTS in conjunctive condition is supported.
+* normal subquery decorrelation based on Calcite
+* projection pruning
+* filter push down
+* partition pruning
+* join reorder if it is enabled (`sql.optimizer.join-reorder.enabled` is true)
+* skew join optimization
+* other kinds of query rewriting
 
-It is possible to tweak the set of optimization rules which are applied in different phases by providing a `CalciteConfig` object. This can be created via a builder by calling `CalciteConfig.createBuilder())` and is provided to the TableEnvironment by calling `tableEnv.getConfig.setPlannerConfig(calciteConfig)`.
+Secondly, Flink introduces rich statistics of data source and propagate those statistics up to the whole plan based on all kinds of extended `MetadataHandler`s. Optimizer could choose better plan based on those metadata.
 
-</div>
+Finally, Flink provides fine-grain cost of each operator, which takes io, cpu, network and memory into account. Cost-based optimization could choose better plan based on fine-grain cost definition .
 
-<div data-lang="Blink planner" markdown="1">
+It is possible to customize optimization programs referencing to `FlinkBatchPrograms`(default optimization programs for batch) or `FlinkStreamPrograms`(default optimization programs for stream), and replace the default optimization programs by providing a `CalciteConfig` object. This can be created via a builder by calling `CalciteConfig.createBuilder())` and is provided to the TableEnvironment by calling `tableEnv.getConfig.setCalciteConfig(calciteConfig)`. 
 
-Apache Flink leverages and extends Apache Calcite to perform sophisticated query optimization.
-This includes a series of rule and cost-based optimizations such as:
+### Reuse SubPlan
+Flink will try to find duplicate sub-plans by the digest of physical sub-plan and reuse them if Reuse sub-plan is enabled (`sql.optimizer.reuse.sub-plan.enabled` is true, default is false).
 
-* Subquery decorrelation based on Apache Calcite
-* Project pruning
-* Partition pruning
-* Filter push-down
-* Sub-plan deduplication to avoid duplicate computation
-* Special subquery rewriting, including two parts:
-    * Converts IN and EXISTS into left semi-joins
-    * Converts NOT IN and NOT EXISTS into left anti-join
-* Optional join reordering
-    * Enabled via `table.optimizer.join-reorder-enabled`
+**Note:** Reuse sub-plan on Batch is supported now. 
 
-**Note:** IN/EXISTS/NOT IN/NOT EXISTS are currently only supported in conjunctive conditions in subquery rewriting.
-
-The optimizer makes intelligent decisions, based not only on the plan but also rich statistics available from the data sources and fine-grain costs for each operator such as io, cpu, network, and memory.
-
-Advanced users may provide custom optimizations via a `CalciteConfig` object that can be provided to the table environment by calling `TableEnvironment#getConfig#setPlannerConfig`.
-
-</div>
-</div>
-
-
-### Explaining a Table
-
-The Table API provides a mechanism to explain the logical and optimized query plans to compute a `Table`. 
-This is done through the `TableEnvironment.explain(table)` method or `TableEnvironment.explain()` method. `explain(table)` returns the plan of a given `Table`. `explain()` returns the result of a multiple-sinks plan and is mainly used for the Blink planner. It returns a String describing three plans:
-
-1. the Abstract Syntax Tree of the relational query, i.e., the unoptimized logical query plan,
-2. the optimized logical query plan, and
-3. the physical execution plan.
-
-The following code shows an example and the corresponding output for given `Table` using `explain(table)`:
+The following code example shows the physical plan when reuse sub-plan is enabled.
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
 StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-StreamTableEnvironment tEnv = StreamTableEnvironment.create(env);
+// create a BatchTableEnvironment
+BatchTableEnvironment tableEnv = TableEnvironment.getBatchTableEnvironment(env);
+
+// register Orders table
+
+// this part is reusable
+Table table = tEnv.scan("Orders")
+	.groupBy("cID, cName")
+	.select("cID, cName, revenue.sum as revSum, revenue.avg as revAvg");
+
+Table table1 = table.select("cID as cID1, cName as cName1, revSum as revSum1, revAvg as revAvg1");
+Table table2 = table.select("cID as cID2, cName as cName2, revSum as revSum2, revAvg as revAvg2");
+Table result = table1.join(table2, "revSum1 = revAvg2 && cID1 <> cID2");
+
+// show plan with reuse info
+String plan = tEnv.explain(result);
+System.out.println(plan);
+{% endhighlight %}
+</div>
+
+<div data-lang="scala" markdown="1">
+{% highlight scala %}
+val env = StreamExecutionEnvironment.getExecutionEnvironment
+// create a BatchTableEnvironment
+val tEnv = TableEnvironment.getBatchTableEnvironment(env)
+
+val table = tEnv.scan("Orders")
+    .groupBy('cID, 'cName)
+    .select('cID, 'cName, 'revenue.sum as 'revSum, 'revenue.avg as 'revAvg)
+
+val table1 = table.select('cID as 'cID1, 'cName as 'cName1, 'revSum as 'revSum1, 'revAvg as 'revAvg1)
+val table2 = table.select('cID as 'cID2, 'cName as 'cName2, 'revSum as 'revSum2, 'revAvg as 'revAvg2)
+val result = table1.join(table2, "revSum1 = revAvg2 && cID1 <> cID2")
+
+// show plan with reuse info
+val plan = tEnv.explain(result)
+println(plan)
+{% endhighlight %}
+</div>
+</div>
+
+the `explain` result is  as follows: (only show physical plan here, sub-plan of `SortAggregate` is reused)
+{% highlight text %}
+SortMergeJoin(where=[AND(=(revSum, revAvg0), <>(cID, cID0))], join=[cID, cName, revSum, revAvg, cID0, cName0, revSum0, revAvg0], joinType=[InnerJoin])
+:- Exchange(distribution=[hash[revSum]])
+:  +- SortAggregate(isMerge=[false], groupBy=[cID, cName], select=[cID, cName, SUM(revenue) AS revSum, AVG(revenue) AS revAvg], reuse_id=[1])
+:     +- Sort(orderBy=[cID ASC, cName ASC])
+:        +- Exchange(distribution=[hash[cID, cName]])
+:           +- TableSourceScan(table=[[builtin, default, Orders, source: [selectedFields=[cID, cName, revenue]]]], fields=[cID, cName, revenue])
++- Exchange(distribution=[hash[revAvg]])
+   +- Reused(reference_id=[1])
+{% endhighlight %}
+
+{% top %}
+
+### Explaining a Table
+
+The Table API provides a mechanism to explain the logical and optimized query plans to compute a `Table`. 
+This is done through the `TableEnvironment.explain(table)` method. It returns a String describing three plans: 
+
+1. the Abstract Syntax Tree of the relational query, i.e., the unoptimized logical query plan,
+2. the optimized logical query plan, and
+3. the physical execution plan.
+
+The following code shows an example and the corresponding output:
+
+<div class="codetabs" markdown="1">
+<div data-lang="java" markdown="1">
+{% highlight java %}
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+StreamTableEnvironment tEnv = TableEnvironment.getTableEnvironment(env);
 
 DataStream<Tuple2<Integer, String>> stream1 = env.fromElements(new Tuple2<>(1, "hello"));
 DataStream<Tuple2<Integer, String>> stream2 = env.fromElements(new Tuple2<>(1, "hello"));
@@ -1439,7 +1226,7 @@ System.out.println(explanation);
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 val env = StreamExecutionEnvironment.getExecutionEnvironment
-val tEnv = StreamTableEnvironment.create(env)
+val tEnv = TableEnvironment.getTableEnvironment(env)
 
 val table1 = env.fromElements((1, "hello")).toTable(tEnv, 'count, 'word)
 val table2 = env.fromElements((1, "hello")).toTable(tEnv, 'count, 'word)
@@ -1451,304 +1238,99 @@ val explanation: String = tEnv.explain(table)
 println(explanation)
 {% endhighlight %}
 </div>
-
-<div data-lang="python" markdown="1">
-{% highlight python %}
-env = StreamExecutionEnvironment.get_execution_environment()
-t_env = StreamTableEnvironment.create(env)
-
-table1 = t_env.from_elements([(1, "hello")], ["count", "word"])
-table2 = t_env.from_elements([(1, "hello")], ["count", "word"])
-table = table1 \
-    .where("LIKE(word, 'F%')") \
-    .union_all(table2)
-
-explanation = t_env.explain(table)
-print(explanation)
-{% endhighlight %}
-</div>
 </div>
 
-<div class="codetabs" markdown="1">
-<div data-lang="java" markdown="1">
 {% highlight text %}
 == Abstract Syntax Tree ==
 LogicalUnion(all=[true])
-  LogicalFilter(condition=[LIKE($1, _UTF-16LE'F%')])
-    FlinkLogicalDataStreamScan(id=[1], fields=[count, word])
-  FlinkLogicalDataStreamScan(id=[2], fields=[count, word])
+  LogicalFilter(condition=[LIKE($1, 'F%')])
+    LogicalTableScan(table=[[builtin, default, _DataStreamTable_0]])
+  LogicalTableScan(table=[[builtin, default, _DataStreamTable_1]])
 
 == Optimized Logical Plan ==
-DataStreamUnion(all=[true], union all=[count, word])
-  DataStreamCalc(select=[count, word], where=[LIKE(word, _UTF-16LE'F%')])
-    DataStreamScan(id=[1], fields=[count, word])
-  DataStreamScan(id=[2], fields=[count, word])
+DataStreamUnion(union=[count, word])
+  DataStreamCalc(select=[count, word], where=[LIKE(word, 'F%')])
+    DataStreamScan(table=[[builtin, default, _DataStreamTable_0]])
+  DataStreamScan(table=[[builtin, default, _DataStreamTable_1]])
 
 == Physical Execution Plan ==
 Stage 1 : Data Source
-	content : collect elements with CollectionInputFormat
+  content : collect elements with CollectionInputFormat
 
 Stage 2 : Data Source
-	content : collect elements with CollectionInputFormat
+  content : collect elements with CollectionInputFormat
 
-	Stage 3 : Operator
-		content : from: (count, word)
-		ship_strategy : REBALANCE
+  Stage 3 : Operator
+    content : from: (count, word)
+    ship_strategy : REBALANCE
 
-		Stage 4 : Operator
-			content : where: (LIKE(word, _UTF-16LE'F%')), select: (count, word)
-			ship_strategy : FORWARD
+    Stage 4 : Operator
+      content : where: (LIKE(word, 'F%')), select: (count, word)
+      ship_strategy : FORWARD
 
-			Stage 5 : Operator
-				content : from: (count, word)
-				ship_strategy : REBALANCE
+      Stage 5 : Operator
+        content : from: (count, word)
+        ship_strategy : REBALANCE
 {% endhighlight %}
-</div>
 
-<div data-lang="scala" markdown="1">
-{% highlight text %}
-== Abstract Syntax Tree ==
-LogicalUnion(all=[true])
-  LogicalFilter(condition=[LIKE($1, _UTF-16LE'F%')])
-    FlinkLogicalDataStreamScan(id=[1], fields=[count, word])
-  FlinkLogicalDataStreamScan(id=[2], fields=[count, word])
+### Alter Table Statistics
 
-== Optimized Logical Plan ==
-DataStreamUnion(all=[true], union all=[count, word])
-  DataStreamCalc(select=[count, word], where=[LIKE(word, _UTF-16LE'F%')])
-    DataStreamScan(id=[1], fields=[count, word])
-  DataStreamScan(id=[2], fields=[count, word])
+The Table API provides a mechanism to fetch or modify a `Table` statistics which we represent as a struct as `FlinkStatistic`.
+The `FlinkStatistic` contains information of a flink `Table` as below:
 
-== Physical Execution Plan ==
-Stage 1 : Data Source
-	content : collect elements with CollectionInputFormat
+1. The columns which can be seen as unique keys.
+2. Statistics of skewed column names and values.
+3. Column monotonicity
+4. `TableStats` which contains a `ColumnStats` of each column.
 
-Stage 2 : Data Source
-	content : collect elements with CollectionInputFormat
+The `ColumnStats` contains information of a `Table` column as below:
 
-	Stage 3 : Operator
-		content : from: (count, word)
-		ship_strategy : REBALANCE
+1. The number of distinct values(NDV).
+2. Null values count.
+3. Average length of the column values.
+4. Max length of the column values.
+5. Max value of the column values.
+5. Min values of the column values.
 
-		Stage 4 : Operator
-			content : where: (LIKE(word, _UTF-16LE'F%')), select: (count, word)
-			ship_strategy : FORWARD
-
-			Stage 5 : Operator
-				content : from: (count, word)
-				ship_strategy : REBALANCE
-{% endhighlight %}
-</div>
-
-<div data-lang="python" markdown="1">
-{% highlight text %}
-== Abstract Syntax Tree ==
-LogicalUnion(all=[true])
-  LogicalFilter(condition=[LIKE($1, _UTF-16LE'F%')])
-    FlinkLogicalDataStreamScan(id=[3], fields=[count, word])
-  FlinkLogicalDataStreamScan(id=[6], fields=[count, word])
-
-== Optimized Logical Plan ==
-DataStreamUnion(all=[true], union all=[count, word])
-  DataStreamCalc(select=[count, word], where=[LIKE(word, _UTF-16LE'F%')])
-    DataStreamScan(id=[3], fields=[count, word])
-  DataStreamScan(id=[6], fields=[count, word])
-
-== Physical Execution Plan ==
-Stage 1 : Data Source
-	content : collect elements with CollectionInputFormat
-
-	Stage 2 : Operator
-		content : Flat Map
-		ship_strategy : FORWARD
-
-		Stage 3 : Operator
-			content : Map
-			ship_strategy : FORWARD
-
-Stage 4 : Data Source
-	content : collect elements with CollectionInputFormat
-
-	Stage 5 : Operator
-		content : Flat Map
-		ship_strategy : FORWARD
-
-		Stage 6 : Operator
-			content : Map
-			ship_strategy : FORWARD
-
-			Stage 7 : Operator
-				content : Map
-				ship_strategy : FORWARD
-
-				Stage 8 : Operator
-					content : where: (LIKE(word, _UTF-16LE'F%')), select: (count, word)
-					ship_strategy : FORWARD
-
-					Stage 9 : Operator
-						content : Map
-						ship_strategy : FORWARD
-{% endhighlight %}
-</div>
-</div>
-
-The following code shows an example and the corresponding output for multiple-sinks plan using `explain()`:
+This statistics is very important in query optimization, Flink will try to choose the best query plan based on these statistics.
+ 
+This following code shows how to interact with the `FlinkStatistic`:
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+StreamTableEnvironment tEnv = TableEnvironment.getTableEnvironment(env);
 
-EnvironmentSettings settings = EnvironmentSettings.newInstance().useBlinkPlanner().inStreamingMode().build();
-TableEnvironment tEnv = TableEnvironment.create(settings);
+// Get table stats
+String tablePath = "catalog1.database1.table1";
+TableStats tableStats = tEnv.getTableStats(tablePath);
 
-String[] fieldNames = { "count", "word" };
-TypeInformation[] fieldTypes = { Types.INT, Types.STRING };
-tEnv.registerTableSource("MySource1", new CsvTableSource("/source/path1", fieldNames, fieldTypes));
-tEnv.registerTableSource("MySource2", new CsvTableSource("/source/path2", fieldNames, fieldTypes));
-tEnv.registerTableSink("MySink1", new CsvTableSink("/sink/path1").configure(fieldNames, fieldTypes));
-tEnv.registerTableSink("MySink2", new CsvTableSink("/sink/path2").configure(fieldNames, fieldTypes));
-
-Table table1 = tEnv.scan("MySource1").where("LIKE(word, 'F%')");
-table1.insertInto("MySink1");
-
-Table table2 = table1.unionAll(tEnv.scan("MySource2"));
-table2.insertInto("MySink2");
-
-String explanation = tEnv.explain(false);
-System.out.println(explanation);
+// modify table stats
+TableStats tableStats1 = ...
+Array<String> tablePath1 = ...
+tEnv.alterTableStats(tablePath1, tableStats1);
 
 {% endhighlight %}
 </div>
 
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
-val settings = EnvironmentSettings.newInstance.useBlinkPlanner.inStreamingMode.build
-val tEnv = TableEnvironment.create(settings)
+val env = StreamExecutionEnvironment.getExecutionEnvironment();
+val tEnv = TableEnvironment.getTableEnvironment(env);
 
-val fieldNames = Array("count", "word")
-val fieldTypes = Array[TypeInformation[_]](Types.INT, Types.STRING)
-tEnv.registerTableSource("MySource1", new CsvTableSource("/source/path1", fieldNames, fieldTypes))
-tEnv.registerTableSource("MySource2", new CsvTableSource("/source/path2",fieldNames, fieldTypes))
-tEnv.registerTableSink("MySink1", new CsvTableSink("/sink/path1").configure(fieldNames, fieldTypes))
-tEnv.registerTableSink("MySink2", new CsvTableSink("/sink/path2").configure(fieldNames, fieldTypes))
+// Get table stats
+val tablePath = "catalog1.database1.table1"
+val tableStats = tEnv.getTableStats(tablePath)
 
-val table1 = tEnv.scan("MySource1").where("LIKE(word, 'F%')")
-table1.insertInto("MySink1")
-
-val table2 = table1.unionAll(tEnv.scan("MySource2"))
-table2.insertInto("MySink2")
-
-val explanation = tEnv.explain(false)
-println(explanation)
+// modify table stats
+val tableStats1 = ...
+val tablePath1 = ...
+tEnv.alterTableStats(tablePath1, tableStats1)
 
 {% endhighlight %}
 </div>
-
-<div data-lang="python" markdown="1">
-{% highlight python %}
-settings = EnvironmentSettings.new_instance().use_blink_planner().in_streaming_mode().build()
-t_env = TableEnvironment.create(environment_settings=settings)
-
-field_names = ["count", "word"]
-field_types = [DataTypes.INT(), DataTypes.STRING()]
-t_env.register_table_source("MySource1", CsvTableSource("/source/path1", field_names, field_types))
-t_env.register_table_source("MySource2", CsvTableSource("/source/path2", field_names, field_types))
-t_env.register_table_sink("MySink1", CsvTableSink("/sink/path1", field_names, field_types))
-t_env.register_table_sink("MySink2", CsvTableSink("/sink/path2", field_names, field_types))
-
-table1 = t_env.scan("MySource1").where("LIKE(word, 'F%')")
-table1.insert_into("MySink1")
-
-table2 = table1.union_all(t_env.scan("MySource2"))
-table2.insert_into("MySink2")
-
-explanation = t_env.explain()
-print(explanation)
-{% endhighlight %}
 </div>
-</div>
-
-the result of multiple-sinks plan is
-<div>
-{% highlight text %}
-
-== Abstract Syntax Tree ==
-LogicalSink(name=[MySink1], fields=[count, word])
-+- LogicalFilter(condition=[LIKE($1, _UTF-16LE'F%')])
-   +- LogicalTableScan(table=[[default_catalog, default_database, MySource1, source: [CsvTableSource(read fields: count, word)]]])
-
-LogicalSink(name=[MySink2], fields=[count, word])
-+- LogicalUnion(all=[true])
-   :- LogicalFilter(condition=[LIKE($1, _UTF-16LE'F%')])
-   :  +- LogicalTableScan(table=[[default_catalog, default_database, MySource1, source: [CsvTableSource(read fields: count, word)]]])
-   +- LogicalTableScan(table=[[default_catalog, default_database, MySource2, source: [CsvTableSource(read fields: count, word)]]])
-
-== Optimized Logical Plan ==
-Calc(select=[count, word], where=[LIKE(word, _UTF-16LE'F%')], reuse_id=[1])
-+- TableSourceScan(table=[[default_catalog, default_database, MySource1, source: [CsvTableSource(read fields: count, word)]]], fields=[count, word])
-
-Sink(name=[MySink1], fields=[count, word])
-+- Reused(reference_id=[1])
-
-Sink(name=[MySink2], fields=[count, word])
-+- Union(all=[true], union=[count, word])
-   :- Reused(reference_id=[1])
-   +- TableSourceScan(table=[[default_catalog, default_database, MySource2, source: [CsvTableSource(read fields: count, word)]]], fields=[count, word])
-
-== Physical Execution Plan ==
-Stage 1 : Data Source
-	content : collect elements with CollectionInputFormat
-
-	Stage 2 : Operator
-		content : CsvTableSource(read fields: count, word)
-		ship_strategy : REBALANCE
-
-		Stage 3 : Operator
-			content : SourceConversion(table:Buffer(default_catalog, default_database, MySource1, source: [CsvTableSource(read fields: count, word)]), fields:(count, word))
-			ship_strategy : FORWARD
-
-			Stage 4 : Operator
-				content : Calc(where: (word LIKE _UTF-16LE'F%'), select: (count, word))
-				ship_strategy : FORWARD
-
-				Stage 5 : Operator
-					content : SinkConversionToRow
-					ship_strategy : FORWARD
-
-					Stage 6 : Operator
-						content : Map
-						ship_strategy : FORWARD
-
-Stage 8 : Data Source
-	content : collect elements with CollectionInputFormat
-
-	Stage 9 : Operator
-		content : CsvTableSource(read fields: count, word)
-		ship_strategy : REBALANCE
-
-		Stage 10 : Operator
-			content : SourceConversion(table:Buffer(default_catalog, default_database, MySource2, source: [CsvTableSource(read fields: count, word)]), fields:(count, word))
-			ship_strategy : FORWARD
-
-			Stage 12 : Operator
-				content : SinkConversionToRow
-				ship_strategy : FORWARD
-
-				Stage 13 : Operator
-					content : Map
-					ship_strategy : FORWARD
-
-					Stage 7 : Data Sink
-						content : Sink: CsvTableSink(count, word)
-						ship_strategy : FORWARD
-
-						Stage 14 : Data Sink
-							content : Sink: CsvTableSink(count, word)
-							ship_strategy : FORWARD
-
-{% endhighlight %}
-</div>
-
 {% top %}
 
 

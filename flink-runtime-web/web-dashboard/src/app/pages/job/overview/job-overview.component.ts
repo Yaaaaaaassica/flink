@@ -1,150 +1,153 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ *   Licensed to the Apache Software Foundation (ASF) under one
+ *   or more contributor license agreements.  See the NOTICE file
+ *   distributed with this work for additional information
+ *   regarding copyright ownership.  The ASF licenses this file
+ *   to you under the Apache License, Version 2.0 (the
+ *   "License"); you may not use this file except in compliance
+ *   with the License.  You may obtain a copy of the License at
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *   Unless required by applicable law or agreed to in writing, software
+ *   distributed under the License is distributed on an "AS IS" BASIS,
+ *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *   See the License for the specific language governing permissions and
+ *   limitations under the License.
  */
 
+import { NzGraphComponent } from '@ng-zorro/ng-plus/graph';
 import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
   ElementRef,
+  Inject,
   OnDestroy,
   OnInit,
+  Optional,
   ViewChild
 } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
-import { LONG_MIN_VALUE } from 'config';
-import { forkJoin, Observable, of, Subject } from 'rxjs';
-import { catchError, filter, map, takeUntil } from 'rxjs/operators';
-import { NodesItemCorrectInterface, NodesItemLinkInterface } from 'interfaces';
-import { JobService, MetricsService } from 'services';
-import { DagreComponent } from 'share/common/dagre/dagre.component';
+import { NodesItemCorrectInterface } from 'flink-interfaces';
+import { JobOverviewGraphService, JobService } from 'flink-services';
+import { Subject } from 'rxjs';
+import { takeUntil } from 'rxjs/operators';
+import { JOB_OVERVIEW_CONFIG, JobOverviewConfig } from './job-overview.config';
 
 @Component({
-  selector: 'flink-job-overview',
-  templateUrl: './job-overview.component.html',
-  styleUrls: ['./job-overview.component.less'],
-  changeDetection: ChangeDetectionStrategy.OnPush
+  selector       : 'flink-job-overview',
+  templateUrl    : './job-overview.component.html',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  styleUrls      : [ './job-overview.component.less' ]
 })
 export class JobOverviewComponent implements OnInit, OnDestroy {
-  @ViewChild(DagreComponent) dagreComponent: DagreComponent;
-  nodes: NodesItemCorrectInterface[] = [];
-  links: NodesItemLinkInterface[] = [];
+  nodes = [];
+  links = [];
   destroy$ = new Subject();
-  selectedNode: NodesItemCorrectInterface | null;
   top = 500;
+  selectedNode = null;
+  verticesNodeComponent;
   jobId: string;
-  timeoutId: number;
+  canToggleExpand = true;
+  @ViewChild(NzGraphComponent) graphComponent: NzGraphComponent;
 
   onNodeClick(node: NodesItemCorrectInterface) {
-    if (!(this.selectedNode && this.selectedNode.id === node.id)) {
-      this.router.navigate([node.id], { relativeTo: this.activatedRoute }).then();
+    if (this.selectedNode && node.id === this.selectedNode.id) {
+      return;
     }
-  }
-
-  onResizeEnd() {
-    if (!this.selectedNode) {
-      this.dagreComponent.moveToCenter();
-    } else {
-      this.dagreComponent.focusNode(this.selectedNode, true);
-    }
-  }
-
-  mergeWithWatermarks(nodes: NodesItemCorrectInterface[]): Observable<NodesItemCorrectInterface[]> {
-    return forkJoin(
-      nodes.map(node => {
-        const listOfMetricId = [];
-        let lowWatermark = NaN;
-        for (let i = 0; i < node.parallelism; i++) {
-          listOfMetricId.push(`${i}.currentInputWatermark`);
-        }
-        return this.metricService.getMetrics(this.jobId, node.id, listOfMetricId).pipe(
-          map(metrics => {
-            let minValue = NaN;
-            const watermarks: { [index: string]: number } = {};
-            for (const key in metrics.values) {
-              const value = metrics.values[key];
-              const subtaskIndex = key.replace('.currentInputWatermark', '');
-              watermarks[subtaskIndex] = value;
-              if (isNaN(minValue) || value < minValue) {
-                minValue = value;
-              }
-            }
-            if (!isNaN(minValue) && minValue > LONG_MIN_VALUE) {
-              lowWatermark = minValue;
-            } else {
-              lowWatermark = NaN;
-            }
-            return { ...node, lowWatermark };
-          })
-        );
-      })
-    ).pipe(catchError(() => of(nodes)));
-  }
-
-  refreshNodesWithWatermarks() {
-    this.mergeWithWatermarks(this.nodes).subscribe(nodes => {
-      nodes.forEach(node => {
-        this.dagreComponent.updateNode(node.id, node);
-      });
+    this.jobOverviewGraphService.setTransformCache();
+    this.router.navigate([ node.id ], { relativeTo: this.activatedRoute }).then(() => {
+      this.panToCenterByNodeName(node.id);
     });
+  }
+
+  onListNodeClick(node: NodesItemCorrectInterface) {
+    this.graphComponent.fire('node-select', {
+      name: node.id
+    });
+    this.onNodeClick(node);
+  }
+
+  onCloseDrawer() {
+    setTimeout(() => {
+      this.jobOverviewGraphService.resetTransform(this.graphComponent);
+    }, 200);
+  }
+
+  panToCenterByNodeName(name: string) {
+    setTimeout(() => {
+      this.graphComponent.panToCenterByNodeName(name);
+    }, 500);
   }
 
   constructor(
     private jobService: JobService,
-    private router: Router,
-    private activatedRoute: ActivatedRoute,
+    public jobOverviewGraphService: JobOverviewGraphService,
     public elementRef: ElementRef,
-    private metricService: MetricsService,
-    private cdr: ChangeDetectorRef
-  ) {}
+    private router: Router,
+    private cdr: ChangeDetectorRef,
+    private activatedRoute: ActivatedRoute,
+    @Optional() @Inject(JOB_OVERVIEW_CONFIG) config: JobOverviewConfig
+  ) {
+    this.verticesNodeComponent = config.verticesNodeComponent;
+  }
 
   ngOnInit() {
-    this.jobService.jobDetail$
-      .pipe(
-        filter(job => job.jid === this.activatedRoute.parent!.parent!.snapshot.params.jid),
-        takeUntil(this.destroy$)
-      )
-      .subscribe(data => {
-        if (this.jobId !== data.plan.jid) {
-          this.nodes = data.plan.nodes;
-          this.links = data.plan.links;
-          this.jobId = data.plan.jid;
-          this.dagreComponent.flush(this.nodes, this.links, true).then();
-          this.refreshNodesWithWatermarks();
-        } else {
-          this.nodes = data.plan.nodes;
-          this.refreshNodesWithWatermarks();
-        }
-        this.cdr.markForCheck();
-      });
-
-    this.jobService.selectedVertex$.pipe(takeUntil(this.destroy$)).subscribe(data => {
-      if (data) {
-        this.dagreComponent.focusNode(data);
-      } else if (this.selectedNode) {
-        this.timeoutId = setTimeout(() => this.dagreComponent.redrawGraph());
+    this.jobService.jobDetailLatest$.pipe(
+      takeUntil(this.destroy$),
+    ).subscribe(data => {
+      if (!data || !data.plan || !data.verticesDetail) {
+        return;
       }
+      this.canToggleExpand  = data.verticesDetail.operators && data.verticesDetail.operators.length > 0;
+      data.verticesDetail = this.jobService.fillEmptyOperators(data.plan.nodes, data.verticesDetail);
+      if (data.plan.jid !== this.jobId) {
+        this.jobId = data.plan.jid;
+        this.selectedNode = null;
+        this.nodes = data.plan.nodes;
+        this.links = data.plan.links;
+        this.jobOverviewGraphService.initGraph(this.graphComponent, data);
+        this.cdr.markForCheck();
+      } else {
+        this.nodes = data.plan.nodes;
+        this.jobOverviewGraphService.updateData(data);
+      }
+    });
+    this.jobService.selectedVertexNode$.pipe(takeUntil(this.destroy$)).subscribe((data) => {
       this.selectedNode = data;
+      if (!this.selectedNode) {
+        this.onCloseDrawer();
+      }
     });
   }
 
   ngOnDestroy() {
     this.destroy$.next();
     this.destroy$.complete();
-    clearTimeout(this.timeoutId);
+    this.jobService.selectedVertexNode$.next(null);
+  }
+
+  dagreEvent($event) {
+    switch ($event.eventName) {
+      case 'vertices-click':
+        this.onNodeClick($event.event);
+        break;
+      default:
+        break;
+    }
+  }
+
+  collapseAll() {
+    this.graphComponent.expandOrCollapseAll(false);
+    setTimeout(() => {
+      this.graphComponent.fit();
+    }, 300);
+  }
+
+  expandAll() {
+    this.graphComponent.expandOrCollapseAll(true);
+    setTimeout(() => {
+      this.graphComponent.fit();
+      this.graphComponent.traceInputs();
+    }, 300);
   }
 }

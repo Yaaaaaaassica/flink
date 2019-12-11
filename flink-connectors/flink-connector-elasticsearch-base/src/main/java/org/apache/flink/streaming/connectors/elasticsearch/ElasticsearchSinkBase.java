@@ -166,9 +166,6 @@ public abstract class ElasticsearchSinkBase<T, C extends AutoCloseable> extends 
 	/** Provided to the user via the {@link ElasticsearchSinkFunction} to add {@link ActionRequest ActionRequests}. */
 	private transient RequestIndexer requestIndexer;
 
-	/** Provided to the {@link ActionRequestFailureHandler} to allow users to re-index failed requests. */
-	private transient BufferingNoOpRequestIndexer failureRequestIndexer;
-
 	// ------------------------------------------------------------------------
 	//  Internals for the Flink Elasticsearch Sink
 	// ------------------------------------------------------------------------
@@ -203,7 +200,7 @@ public abstract class ElasticsearchSinkBase<T, C extends AutoCloseable> extends 
 	private final AtomicReference<Throwable> failureThrowable = new AtomicReference<>();
 
 	public ElasticsearchSinkBase(
-		ElasticsearchApiCallBridge<C> callBridge,
+		ElasticsearchApiCallBridge callBridge,
 		Map<String, String> userConfig,
 		ElasticsearchSinkFunction<T> elasticsearchSinkFunction,
 		ActionRequestFailureHandler failureHandler) {
@@ -299,12 +296,13 @@ public abstract class ElasticsearchSinkBase<T, C extends AutoCloseable> extends 
 		client = callBridge.createClient(userConfig);
 		bulkProcessor = buildBulkProcessor(new BulkProcessorListener());
 		requestIndexer = callBridge.createBulkProcessorIndexer(bulkProcessor, flushOnCheckpoint, numPendingRequests);
-		failureRequestIndexer = new BufferingNoOpRequestIndexer();
 	}
 
 	@Override
-	public void invoke(T value, Context context) throws Exception {
-		checkAsyncErrorsAndRequests();
+	public void invoke(T value) throws Exception {
+		// if bulk processor callbacks have previously reported an error, we rethrow the error and fail the sink
+		checkErrorAndRethrow();
+
 		elasticsearchSinkFunction.process(value, getRuntimeContext(), requestIndexer);
 	}
 
@@ -315,13 +313,13 @@ public abstract class ElasticsearchSinkBase<T, C extends AutoCloseable> extends 
 
 	@Override
 	public void snapshotState(FunctionSnapshotContext context) throws Exception {
-		checkAsyncErrorsAndRequests();
+		checkErrorAndRethrow();
 
 		if (flushOnCheckpoint) {
-			while (numPendingRequests.get() != 0) {
+			do {
 				bulkProcessor.flush();
-				checkAsyncErrorsAndRequests();
-			}
+				checkErrorAndRethrow();
+			} while (numPendingRequests.get() != 0);
 		}
 	}
 
@@ -382,11 +380,6 @@ public abstract class ElasticsearchSinkBase<T, C extends AutoCloseable> extends 
 		}
 	}
 
-	private void checkAsyncErrorsAndRequests() {
-		checkErrorAndRethrow();
-		failureRequestIndexer.processBufferedRequests(requestIndexer);
-	}
-
 	private class BulkProcessorListener implements BulkProcessor.Listener {
 		@Override
 		public void beforeBulk(long executionId, BulkRequest request) { }
@@ -407,9 +400,9 @@ public abstract class ElasticsearchSinkBase<T, C extends AutoCloseable> extends 
 
 							restStatus = itemResponse.getFailure().getStatus();
 							if (restStatus == null) {
-								failureHandler.onFailure(request.requests().get(i), failure, -1, failureRequestIndexer);
+								failureHandler.onFailure(request.requests().get(i), failure, -1, requestIndexer);
 							} else {
-								failureHandler.onFailure(request.requests().get(i), failure, restStatus.getStatus(), failureRequestIndexer);
+								failureHandler.onFailure(request.requests().get(i), failure, restStatus.getStatus(), requestIndexer);
 							}
 						}
 					}
@@ -427,11 +420,11 @@ public abstract class ElasticsearchSinkBase<T, C extends AutoCloseable> extends 
 
 		@Override
 		public void afterBulk(long executionId, BulkRequest request, Throwable failure) {
-			LOG.error("Failed Elasticsearch bulk request: {}", failure.getMessage(), failure);
+			LOG.error("Failed Elasticsearch bulk request: {}", failure.getMessage(), failure.getCause());
 
 			try {
 				for (ActionRequest action : request.requests()) {
-					failureHandler.onFailure(action, failure, -1, failureRequestIndexer);
+					failureHandler.onFailure(action, failure, -1, requestIndexer);
 				}
 			} catch (Throwable t) {
 				// fail the sink and skip the rest of the items

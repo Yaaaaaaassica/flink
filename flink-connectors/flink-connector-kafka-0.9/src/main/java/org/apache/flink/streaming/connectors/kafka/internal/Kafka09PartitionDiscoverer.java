@@ -23,6 +23,7 @@ import org.apache.flink.streaming.connectors.kafka.internals.KafkaTopicPartition
 import org.apache.flink.streaming.connectors.kafka.internals.KafkaTopicsDescriptor;
 
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.PartitionInfo;
 
 import java.util.ArrayList;
@@ -55,7 +56,21 @@ public class Kafka09PartitionDiscoverer extends AbstractPartitionDiscoverer {
 
 	@Override
 	protected void initializeConnections() {
-		this.kafkaConsumer = new KafkaConsumer<>(kafkaProperties);
+		this.kafkaConsumer = createKafkaConsumer(kafkaProperties);
+	}
+
+	private KafkaConsumer createKafkaConsumer(Properties kafkaProperties) {
+		try {
+			return new KafkaConsumer<>(kafkaProperties);
+		} catch (KafkaException e) {
+			ClassLoader original = Thread.currentThread().getContextClassLoader();
+			try {
+				Thread.currentThread().setContextClassLoader(null);
+				return new KafkaConsumer<>(kafkaProperties);
+			} finally {
+				Thread.currentThread().setContextClassLoader(original);
+			}
+		}
 	}
 
 	@Override
@@ -69,18 +84,12 @@ public class Kafka09PartitionDiscoverer extends AbstractPartitionDiscoverer {
 	}
 
 	@Override
-	protected List<KafkaTopicPartition> getAllPartitionsForTopics(List<String> topics) throws WakeupException, RuntimeException {
+	protected List<KafkaTopicPartition> getAllPartitionsForTopics(List<String> topics) throws WakeupException {
 		List<KafkaTopicPartition> partitions = new LinkedList<>();
 
 		try {
 			for (String topic : topics) {
-				final List<PartitionInfo> kafkaPartitions = kafkaConsumer.partitionsFor(topic);
-
-				if (kafkaPartitions == null) {
-					throw new RuntimeException("Could not fetch partitions for %s. Make sure that the topic exists.".format(topic));
-				}
-
-				for (PartitionInfo partitionInfo : kafkaPartitions) {
+				for (PartitionInfo partitionInfo : kafkaConsumer.partitionsFor(topic)) {
 					partitions.add(new KafkaTopicPartition(partitionInfo.topic(), partitionInfo.partition()));
 				}
 			}

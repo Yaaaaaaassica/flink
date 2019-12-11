@@ -21,6 +21,7 @@ package org.apache.flink.runtime.io.disk;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.LinkedBlockingQueue;
 
@@ -31,14 +32,12 @@ import org.apache.flink.runtime.io.disk.iomanager.BlockChannelReader;
 import org.apache.flink.runtime.io.disk.iomanager.FileIOChannel;
 import org.apache.flink.runtime.io.disk.iomanager.ChannelReaderInputView;
 import org.apache.flink.runtime.io.disk.iomanager.IOManager;
-import org.apache.flink.util.MutableObjectIterator;
-
 
 /**
  * A simple iterator over the input read though an I/O channel.
  *
  */
-public class ChannelReaderInputViewIterator<E> implements MutableObjectIterator<E>
+public class ChannelReaderInputViewIterator<E> implements ChannelBackendMutableObjectIterator<E>
 {
 	private final AbstractChannelReaderInputView inView;
 	
@@ -70,6 +69,13 @@ public class ChannelReaderInputViewIterator<E> implements MutableObjectIterator<
 		this.freeMemTarget = freeMemTarget;
 		this.inView = new ChannelReaderInputView(reader, segments, numBlocks, false);
 	}
+
+	public ChannelReaderInputViewIterator(AbstractChannelReaderInputView inView, TypeSerializer<E> accessors)
+	{
+		this.inView = inView;
+		this.freeMemTarget = new ArrayList<>();
+		this.accessors = accessors;
+	}
 	
 	public ChannelReaderInputViewIterator(AbstractChannelReaderInputView inView, List<MemorySegment> freeMemTarget, TypeSerializer<E> accessors)
 	{
@@ -77,8 +83,6 @@ public class ChannelReaderInputViewIterator<E> implements MutableObjectIterator<
 		this.freeMemTarget = freeMemTarget;
 		this.accessors = accessors;
 	}
-			
-
 
 	@Override
 	public E next(E reuse) throws IOException
@@ -86,7 +90,7 @@ public class ChannelReaderInputViewIterator<E> implements MutableObjectIterator<
 		try {
 			return this.accessors.deserialize(reuse, this.inView);
 		} catch (EOFException eofex) {
-			final List<MemorySegment> freeMem = this.inView.close();
+			final List<MemorySegment> freeMem = inView.close();
 			if (this.freeMemTarget != null) {
 				this.freeMemTarget.addAll(freeMem);
 			}
@@ -100,11 +104,16 @@ public class ChannelReaderInputViewIterator<E> implements MutableObjectIterator<
 		try {
 			return this.accessors.deserialize(this.inView);
 		} catch (EOFException eofex) {
-			final List<MemorySegment> freeMem = this.inView.close();
+			final List<MemorySegment> freeMem = inView.close();
 			if (this.freeMemTarget != null) {
 				this.freeMemTarget.addAll(freeMem);
 			}
 			return null;
 		}
+	}
+
+	@Override
+	public FileIOChannel getReaderChannel() {
+		return inView.getChannel();
 	}
 }

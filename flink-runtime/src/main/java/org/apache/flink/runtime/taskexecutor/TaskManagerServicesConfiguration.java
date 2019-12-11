@@ -18,38 +18,50 @@
 
 package org.apache.flink.runtime.taskexecutor;
 
-import org.apache.flink.api.common.time.Time;
 import org.apache.flink.configuration.CheckpointingOptions;
+import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ConfigurationUtils;
+import org.apache.flink.configuration.IllegalConfigurationException;
+import org.apache.flink.configuration.QueryableStateOptions;
 import org.apache.flink.configuration.TaskManagerOptions;
 import org.apache.flink.core.memory.MemoryType;
 import org.apache.flink.runtime.akka.AkkaUtils;
-import org.apache.flink.runtime.clusterframework.types.ResourceID;
-import org.apache.flink.runtime.registration.RetryingRegistrationConfiguration;
-import org.apache.flink.runtime.util.ConfigurationParserUtils;
+import org.apache.flink.runtime.clusterframework.types.ResourceProfile;
+import org.apache.flink.runtime.io.disk.iomanager.IOManager;
+import org.apache.flink.runtime.io.network.netty.NettyConfig;
+import org.apache.flink.runtime.io.network.partition.BlockingShuffleType;
+import org.apache.flink.runtime.memory.MemoryManager;
+import org.apache.flink.runtime.taskmanager.NetworkEnvironmentConfiguration;
+import org.apache.flink.util.MathUtils;
+import org.apache.flink.util.NetUtils;
 
-import javax.annotation.Nullable;
+import org.apache.commons.net.util.Base64;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayInputStream;
+import java.io.ObjectInputStream;
 import java.net.InetAddress;
-import java.util.Optional;
+import java.net.InetSocketAddress;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
 
+import static org.apache.flink.configuration.TaskManagerOptions.IO_MANAGER_BUFFERED_READ_SIZE;
+import static org.apache.flink.configuration.TaskManagerOptions.IO_MANAGER_BUFFERED_WRITE_SIZE;
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
- * Configuration for the task manager services such as the memory manager,
+ * Configuration for the task manager services such as the network environment, the memory manager,
  * the io manager and the metric registry.
  */
 public class TaskManagerServicesConfiguration {
-
-	private final Configuration configuration;
-
-	private final ResourceID resourceID;
+	private static final Logger LOG = LoggerFactory.getLogger(TaskManagerServicesConfiguration.class);
 
 	private final InetAddress taskManagerAddress;
-
-	private final boolean localCommunicationOnly;
 
 	private final String[] tmpDirPaths;
 
@@ -57,113 +69,115 @@ public class TaskManagerServicesConfiguration {
 
 	private final int numberOfSlots;
 
-	@Nullable
+	private final NetworkEnvironmentConfiguration networkConfig;
+
 	private final QueryableStateConfiguration queryableStateConfig;
-
-	private final long freeHeapMemoryWithDefrag;
-
-	private final long maxJvmHeapMemory;
 
 	/**
 	 * Managed memory (in megabytes).
 	 *
-	 * @see TaskManagerOptions#LEGACY_MANAGED_MEMORY_SIZE
+	 * @see TaskManagerOptions#MANAGED_MEMORY_SIZE
 	 */
 	private final long configuredMemory;
 
+	/**
+	 * Floating managed memory (in megabytes).
+	 *
+	 * @see TaskManagerOptions#FLOATING_MANAGED_MEMORY_SIZE
+	 */
+	private final long floatingManagedMemorySizeMB;
+
 	private final MemoryType memoryType;
 
-	private final float memoryFraction;
+	private final boolean preAllocateMemory;
 
-	private final int pageSize;
+	private final float memoryFraction;
 
 	private final long timerServiceShutdownTimeout;
 
 	private final boolean localRecoveryEnabled;
 
-	private final RetryingRegistrationConfiguration retryingRegistrationConfiguration;
+	private final List<ResourceProfile> resourceProfileList = new LinkedList<>();
 
-	private Optional<Time> systemResourceMetricsProbingInterval;
+	private final ResourceProfile totalResourceProfile;
+
+	private final int ioManagerBufferedReadSize;
+
+	private final int ioManagerBufferedWriteSize;
+
+	private final int ioManagerNumAsyncReadWriteThread;
 
 	public TaskManagerServicesConfiguration(
-			Configuration configuration,
-			ResourceID resourceID,
 			InetAddress taskManagerAddress,
-			boolean localCommunicationOnly,
 			String[] tmpDirPaths,
 			String[] localRecoveryStateRootDirectories,
-			long freeHeapMemoryWithDefrag,
-			long maxJvmHeapMemory,
 			boolean localRecoveryEnabled,
-			@Nullable QueryableStateConfiguration queryableStateConfig,
+			NetworkEnvironmentConfiguration networkConfig,
+			QueryableStateConfiguration queryableStateConfig,
 			int numberOfSlots,
 			long configuredMemory,
+			long floatingManagedMemorySizeMB,
 			MemoryType memoryType,
+			boolean preAllocateMemory,
 			float memoryFraction,
-			int pageSize,
 			long timerServiceShutdownTimeout,
-			RetryingRegistrationConfiguration retryingRegistrationConfiguration,
-			Optional<Time> systemResourceMetricsProbingInterval) {
-		this.configuration = checkNotNull(configuration);
-		this.resourceID = checkNotNull(resourceID);
+			List<ResourceProfile> resourceProfileList,
+			ResourceProfile totalResourceProfile,
+			int ioManagerBufferedReadSize,
+			int ioManagerBufferedWriteSize,
+			int ioManagerNumAsyncReadWriteThread) {
 
 		this.taskManagerAddress = checkNotNull(taskManagerAddress);
-		this.localCommunicationOnly = localCommunicationOnly;
 		this.tmpDirPaths = checkNotNull(tmpDirPaths);
 		this.localRecoveryStateRootDirectories = checkNotNull(localRecoveryStateRootDirectories);
-		this.freeHeapMemoryWithDefrag = freeHeapMemoryWithDefrag;
-		this.maxJvmHeapMemory = maxJvmHeapMemory;
 		this.localRecoveryEnabled = checkNotNull(localRecoveryEnabled);
-		this.queryableStateConfig = queryableStateConfig;
+		this.networkConfig = checkNotNull(networkConfig);
+		this.queryableStateConfig = checkNotNull(queryableStateConfig);
 		this.numberOfSlots = checkNotNull(numberOfSlots);
 
 		this.configuredMemory = configuredMemory;
+		this.floatingManagedMemorySizeMB = floatingManagedMemorySizeMB;
 		this.memoryType = checkNotNull(memoryType);
+		this.preAllocateMemory = preAllocateMemory;
 		this.memoryFraction = memoryFraction;
-		this.pageSize = pageSize;
+		this.ioManagerBufferedReadSize = ioManagerBufferedReadSize;
+		this.ioManagerBufferedWriteSize = ioManagerBufferedWriteSize;
+		this.ioManagerNumAsyncReadWriteThread = ioManagerNumAsyncReadWriteThread;
 
 		checkArgument(timerServiceShutdownTimeout >= 0L, "The timer " +
 			"service shutdown timeout must be greater or equal to 0.");
 		this.timerServiceShutdownTimeout = timerServiceShutdownTimeout;
-		this.retryingRegistrationConfiguration = checkNotNull(retryingRegistrationConfiguration);
 
-		this.systemResourceMetricsProbingInterval = checkNotNull(systemResourceMetricsProbingInterval);
+		this.resourceProfileList.addAll(checkNotNull(resourceProfileList));
+
+		this.totalResourceProfile = totalResourceProfile;
 	}
 
 	// --------------------------------------------------------------------------------------------
 	//  Getter/Setter
 	// --------------------------------------------------------------------------------------------
 
-	public Configuration getConfiguration() {
-		return configuration;
-	}
-
-	public ResourceID getResourceID() {
-		return resourceID;
-	}
-
-	InetAddress getTaskManagerAddress() {
+	public InetAddress getTaskManagerAddress() {
 		return taskManagerAddress;
-	}
-
-	boolean isLocalCommunicationOnly() {
-		return localCommunicationOnly;
 	}
 
 	public String[] getTmpDirPaths() {
 		return tmpDirPaths;
 	}
 
-	String[] getLocalRecoveryStateRootDirectories() {
+	public String[] getLocalRecoveryStateRootDirectories() {
 		return localRecoveryStateRootDirectories;
 	}
 
-	boolean isLocalRecoveryEnabled() {
+	public boolean isLocalRecoveryEnabled() {
 		return localRecoveryEnabled;
 	}
 
-	@Nullable
-	QueryableStateConfiguration getQueryableStateConfig() {
+	public NetworkEnvironmentConfiguration getNetworkConfig() {
+		return networkConfig;
+	}
+
+	public QueryableStateConfiguration getQueryableStateConfig() {
 		return queryableStateConfig;
 	}
 
@@ -175,21 +189,25 @@ public class TaskManagerServicesConfiguration {
 		return memoryFraction;
 	}
 
+	public int getIoManagerBufferedReadSize() {
+		return ioManagerBufferedReadSize;
+	}
+
+	public int getIoManagerBufferedWriteSize() {
+		return ioManagerBufferedWriteSize;
+	}
+
+	public int getIoManagerNumAsyncReadWriteThread() {
+		return ioManagerNumAsyncReadWriteThread;
+	}
+
 	/**
 	 * Returns the memory type to use.
 	 *
 	 * @return on-heap or off-heap memory
 	 */
-	MemoryType getMemoryType() {
+	public MemoryType getMemoryType() {
 		return memoryType;
-	}
-
-	long getFreeHeapMemoryWithDefrag() {
-		return freeHeapMemoryWithDefrag;
-	}
-
-	long getMaxJvmHeapMemory() {
-		return maxJvmHeapMemory;
 	}
 
 	/**
@@ -197,26 +215,37 @@ public class TaskManagerServicesConfiguration {
 	 *
 	 * @return managed memory or a default value (currently <tt>-1</tt>) if not configured
 	 *
-	 * @see TaskManagerOptions#LEGACY_MANAGED_MEMORY_SIZE
+	 * @see TaskManagerOptions#MANAGED_MEMORY_SIZE
 	 */
-	long getConfiguredMemory() {
+	public long getConfiguredMemory() {
 		return configuredMemory;
 	}
 
-	public int getPageSize() {
-		return pageSize;
+	/**
+	 * Returns the size of the floating managed memory (in megabytes), if configured.
+	 *
+	 * @return floating managed memory or a default value (currently <tt>0</tt>) if not configured
+	 *
+	 * @see TaskManagerOptions#FLOATING_MANAGED_MEMORY_SIZE
+	 */
+	public long getFloatingManagedMemory() {
+		return floatingManagedMemorySizeMB;
 	}
 
-	long getTimerServiceShutdownTimeout() {
+	public boolean isPreAllocateMemory() {
+		return preAllocateMemory;
+	}
+
+	public long getTimerServiceShutdownTimeout() {
 		return timerServiceShutdownTimeout;
 	}
 
-	public Optional<Time> getSystemResourceMetricsProbingInterval() {
-		return systemResourceMetricsProbingInterval;
+	public List<ResourceProfile> getResourceProfileList() {
+		return resourceProfileList;
 	}
 
-	RetryingRegistrationConfiguration getRetryingRegistrationConfiguration() {
-		return retryingRegistrationConfiguration;
+	public ResourceProfile getTotalResourceProfile() {
+		return totalResourceProfile;
 	}
 
 	// --------------------------------------------------------------------------------------------
@@ -228,55 +257,354 @@ public class TaskManagerServicesConfiguration {
 	 * sanity check them.
 	 *
 	 * @param configuration The configuration.
-	 * @param resourceID resource ID of the task manager
 	 * @param remoteAddress identifying the IP address under which the TaskManager will be accessible
-	 * @param freeHeapMemoryWithDefrag an estimate of the size of the free heap memory
-	 * @param maxJvmHeapMemory the maximum JVM heap size
-	 * @param localCommunicationOnly True if only local communication is possible.
-	 *                               Use only in cases where only one task manager runs.
-	 *
-	 * @return configuration of task manager services used to create them
+	 * @param localCommunication True, to skip initializing the network stack.
+	 *                                      Use only in cases where only one task manager runs.
+	 * @return TaskExecutorConfiguration that wrappers InstanceConnectionInfo, NetworkEnvironmentConfiguration, etc.
 	 */
 	public static TaskManagerServicesConfiguration fromConfiguration(
 			Configuration configuration,
-			ResourceID resourceID,
 			InetAddress remoteAddress,
-			long freeHeapMemoryWithDefrag,
-			long maxJvmHeapMemory,
-			boolean localCommunicationOnly) {
+			boolean localCommunication) throws Exception {
+
+		// we need this because many configs have been written with a "-1" entry
+		int slots = configuration.getInteger(TaskManagerOptions.NUM_TASK_SLOTS, 1);
+		if (slots == -1) {
+			slots = 1;
+		}
+
 		final String[] tmpDirs = ConfigurationUtils.parseTempDirectories(configuration);
 		String[] localStateRootDir = ConfigurationUtils.parseLocalStateDirectories(configuration);
+
 		if (localStateRootDir.length == 0) {
 			// default to temp dirs.
 			localStateRootDir = tmpDirs;
 		}
 
-		boolean localRecoveryMode = configuration.getBoolean(CheckpointingOptions.LOCAL_RECOVERY);
+		boolean localRecoveryMode = configuration.getBoolean(
+			CheckpointingOptions.LOCAL_RECOVERY.key(),
+			CheckpointingOptions.LOCAL_RECOVERY.defaultValue());
 
-		final QueryableStateConfiguration queryableStateConfig = QueryableStateConfiguration.fromConfiguration(configuration);
+		final NetworkEnvironmentConfiguration networkConfig = parseNetworkEnvironmentConfiguration(
+			configuration,
+			localCommunication,
+			remoteAddress,
+			slots);
+
+		final QueryableStateConfiguration queryableStateConfig =
+				parseQueryableStateConfiguration(configuration);
+
+		// extract memory settings
+		long configuredMemory = configuration.getLong(TaskManagerOptions.MANAGED_MEMORY_SIZE);
+		checkConfigParameter(
+			configuredMemory == TaskManagerOptions.MANAGED_MEMORY_SIZE.defaultValue() ||
+				configuredMemory > 0, configuredMemory,
+			TaskManagerOptions.MANAGED_MEMORY_SIZE.key(),
+			"MemoryManager needs at least one MB of memory. " +
+				"If you leave this config parameter empty, the system automatically " +
+				"pick a fraction of the available memory.");
+
+		final long floatingMemorySizeMB = configuration.getLong(TaskManagerOptions.FLOATING_MANAGED_MEMORY_SIZE);
+
+		// check whether we use heap or off-heap memory
+		final MemoryType memType;
+		if (configuration.getBoolean(TaskManagerOptions.MEMORY_OFF_HEAP)) {
+			memType = MemoryType.OFF_HEAP;
+		} else {
+			memType = MemoryType.HEAP;
+		}
+
+		boolean preAllocateMemory = configuration.getBoolean(TaskManagerOptions.MANAGED_MEMORY_PRE_ALLOCATE);
+
+		float memoryFraction = configuration.getFloat(TaskManagerOptions.MANAGED_MEMORY_FRACTION);
+		checkConfigParameter(memoryFraction > 0.0f && memoryFraction < 1.0f, memoryFraction,
+			TaskManagerOptions.MANAGED_MEMORY_FRACTION.key(),
+			"MemoryManager fraction of the free memory must be between 0.0 and 1.0");
 
 		long timerServiceShutdownTimeout = AkkaUtils.getTimeout(configuration).toMillis();
 
-		final RetryingRegistrationConfiguration retryingRegistrationConfiguration = RetryingRegistrationConfiguration.fromConfiguration(configuration);
+		List<ResourceProfile> resourceProfiles = new ArrayList<>(slots);
+		String resource = configuration.getString(TaskManagerOptions.TASK_MANAGER_RESOURCE_PROFILE_KEY);
+		if (!resource.isEmpty()) {
+			ByteArrayInputStream input = new ByteArrayInputStream(Base64.decodeBase64(resource));
+			ObjectInputStream rpInput = new ObjectInputStream(input);
+			ResourceProfile resourceProfile = (ResourceProfile)rpInput.readObject();
+			rpInput.close();
+			for (int i = 0; i < slots; ++i) {
+				resourceProfiles.add(resourceProfile);
+			}
+		}
+
+		ResourceProfile totalResourceProfile = ResourceProfile.UNKNOWN;
+		String totalResource = configuration.getString(TaskManagerOptions.TASK_MANAGER_TOTAL_RESOURCE_PROFILE_KEY);
+		if (!totalResource.isEmpty()) {
+			ByteArrayInputStream input = new ByteArrayInputStream(Base64.decodeBase64(totalResource));
+			ObjectInputStream rpInput = new ObjectInputStream(input);
+			totalResourceProfile = (ResourceProfile)rpInput.readObject();
+		}
+
+		final int ioManagerBufferedReadSize = configuration.getInteger(IO_MANAGER_BUFFERED_READ_SIZE);
+		final int ioManagerBufferedWriteSize = configuration.getInteger(IO_MANAGER_BUFFERED_WRITE_SIZE);
+
+		int ioManagerNumAsyncReadWriteThread = configuration.getInteger(TaskManagerOptions.IO_MANAGER_ASYNC_NUM_READ_WRITE_THREAD);
+
+		if (ioManagerNumAsyncReadWriteThread <= 0) {
+			final BlockingShuffleType shuffleType = BlockingShuffleType.getBlockingShuffleTypeFromConfiguration(configuration, LOG);
+			if (BlockingShuffleType.YARN.equals(shuffleType)) {
+				String localDirs = configuration.getString(TaskManagerOptions.TASK_MANAGER_OUTPUT_LOCAL_OUTPUT_DIRS);
+				String[] dirs = localDirs.split(",");
+				ioManagerNumAsyncReadWriteThread = Math.max(2, 2 * dirs.length);
+			} else {
+				ioManagerNumAsyncReadWriteThread = Math.max(1, tmpDirs.length);
+			}
+		}
+
+		LOG.info("TaskManager will starts {} IO threads.", ioManagerNumAsyncReadWriteThread);
 
 		return new TaskManagerServicesConfiguration(
-			configuration,
-			resourceID,
 			remoteAddress,
-			localCommunicationOnly,
 			tmpDirs,
 			localStateRootDir,
-			freeHeapMemoryWithDefrag,
-			maxJvmHeapMemory,
 			localRecoveryMode,
+			networkConfig,
 			queryableStateConfig,
-			ConfigurationParserUtils.getSlot(configuration),
-			ConfigurationParserUtils.getManagedMemorySize(configuration),
-			ConfigurationParserUtils.getMemoryType(configuration),
-			ConfigurationParserUtils.getManagedMemoryFraction(configuration),
-			ConfigurationParserUtils.getPageSize(configuration),
+			slots,
+			configuredMemory,
+			floatingMemorySizeMB,
+			memType,
+			preAllocateMemory,
+			memoryFraction,
 			timerServiceShutdownTimeout,
-			retryingRegistrationConfiguration,
-			ConfigurationUtils.getSystemResourceMetricsProbingInterval(configuration));
+			resourceProfiles,
+			totalResourceProfile,
+			ioManagerBufferedReadSize,
+			ioManagerBufferedWriteSize,
+			ioManagerNumAsyncReadWriteThread);
+	}
+
+	// --------------------------------------------------------------------------
+	//  Parsing and checking the TaskManager Configuration
+	// --------------------------------------------------------------------------
+
+	/**
+	 * Creates the {@link NetworkEnvironmentConfiguration} from the given {@link Configuration}.
+	 *
+	 * @param configuration to create the network environment configuration from
+	 * @param localTaskManagerCommunication true if task manager communication is local
+	 * @param taskManagerAddress address of the task manager
+	 * @param slots to start the task manager with
+	 * @return Network environment configuration
+	 */
+	@SuppressWarnings("deprecation")
+	private static NetworkEnvironmentConfiguration parseNetworkEnvironmentConfiguration(
+		Configuration configuration,
+		boolean localTaskManagerCommunication,
+		InetAddress taskManagerAddress,
+		int slots) throws Exception {
+
+		// ----> hosts / ports for communication and data exchange
+
+		int dataport = configuration.getInteger(TaskManagerOptions.DATA_PORT);
+
+		checkConfigParameter(dataport >= 0, dataport, TaskManagerOptions.DATA_PORT.key(),
+			"Leave config parameter empty or use 0 to let the system choose a port automatically.");
+
+		checkConfigParameter(slots >= 1, slots, TaskManagerOptions.NUM_TASK_SLOTS.key(),
+			"Number of task slots must be at least one.");
+
+		final int pageSize = configuration.getInteger(TaskManagerOptions.MEMORY_SEGMENT_SIZE);
+
+		// check page size of for minimum size
+		checkConfigParameter(pageSize >= MemoryManager.MIN_PAGE_SIZE, pageSize,
+			TaskManagerOptions.MEMORY_SEGMENT_SIZE.key(),
+			"Minimum memory segment size is " + MemoryManager.MIN_PAGE_SIZE);
+
+		// check page size for power of two
+		checkConfigParameter(MathUtils.isPowerOf2(pageSize), pageSize,
+			TaskManagerOptions.MEMORY_SEGMENT_SIZE.key(),
+			"Memory segment size must be a power of 2.");
+
+		// network buffer memory fraction
+
+		float networkBufFraction = configuration.getFloat(TaskManagerOptions.NETWORK_BUFFERS_MEMORY_FRACTION);
+		long networkBufMin = configuration.getLong(TaskManagerOptions.NETWORK_BUFFERS_MEMORY_MIN);
+		long networkBufMax = configuration.getLong(TaskManagerOptions.NETWORK_BUFFERS_MEMORY_MAX);
+		checkNetworkBufferConfig(pageSize, networkBufFraction, networkBufMin, networkBufMax);
+
+		// fallback: number of network buffers
+		final int numNetworkBuffers = configuration.getInteger(TaskManagerOptions.NETWORK_NUM_BUFFERS);
+		checkNetworkConfigOld(numNetworkBuffers);
+
+		if (!hasNewNetworkBufConf(configuration)) {
+			// map old config to new one:
+			networkBufMin = networkBufMax = ((long) numNetworkBuffers) * pageSize;
+		} else {
+			if (configuration.contains(TaskManagerOptions.NETWORK_NUM_BUFFERS)) {
+				LOG.info("Ignoring old (but still present) network buffer configuration via {}.",
+					TaskManagerOptions.NETWORK_NUM_BUFFERS.key());
+			}
+		}
+
+		final NettyConfig nettyConfig;
+		if (!localTaskManagerCommunication) {
+			final InetSocketAddress taskManagerInetSocketAddress = new InetSocketAddress(taskManagerAddress, dataport);
+
+			nettyConfig = new NettyConfig(taskManagerInetSocketAddress.getAddress(),
+				taskManagerInetSocketAddress.getPort(), pageSize, slots, configuration);
+		} else {
+			nettyConfig = null;
+		}
+
+		// Default spill I/O mode for intermediate results
+		final String syncOrAsync = configuration.getString(
+			ConfigConstants.TASK_MANAGER_NETWORK_DEFAULT_IO_MODE,
+			ConfigConstants.DEFAULT_TASK_MANAGER_NETWORK_DEFAULT_IO_MODE);
+
+		final IOManager.IOMode ioMode;
+		if (syncOrAsync.equals("async")) {
+			ioMode = IOManager.IOMode.ASYNC;
+		} else {
+			ioMode = IOManager.IOMode.SYNC;
+		}
+
+		int initialRequestBackoff = configuration.getInteger(
+			TaskManagerOptions.NETWORK_REQUEST_BACKOFF_INITIAL);
+		int maxRequestBackoff = configuration.getInteger(
+			TaskManagerOptions.NETWORK_REQUEST_BACKOFF_MAX);
+
+		int buffersPerChannel = configuration.getInteger(
+			TaskManagerOptions.NETWORK_BUFFERS_PER_CHANNEL);
+		int extraBuffersPerGate = configuration.getInteger(
+			TaskManagerOptions.NETWORK_EXTRA_BUFFERS_PER_GATE);
+
+		int buffersPerExternalBlockingChannel = configuration.getInteger(
+			TaskManagerOptions.NETWORK_BUFFERS_PER_EXTERNAL_BLOCKING_CHANNEL);
+		int extraBuffersPerExternalBlockingGate = configuration.getInteger(
+			TaskManagerOptions.NETWORK_EXTRA_BUFFERS_PER_EXTERNAL_BLOCKING_GATE);
+
+		int buffersPerSubpartition = configuration.getInteger(
+			TaskManagerOptions.NETWORK_BUFFERS_PER_SUBPARTITION);
+
+		return new NetworkEnvironmentConfiguration(
+			networkBufFraction,
+			networkBufMin,
+			networkBufMax,
+			pageSize,
+			ioMode,
+			initialRequestBackoff,
+			maxRequestBackoff,
+			buffersPerChannel,
+			extraBuffersPerGate,
+			buffersPerExternalBlockingChannel,
+			extraBuffersPerExternalBlockingGate,
+			buffersPerSubpartition,
+			nettyConfig);
+	}
+
+	/**
+	 * Validates the (old) network buffer configuration.
+	 *
+	 * @param numNetworkBuffers		number of buffers used in the network stack
+	 *
+	 * @throws IllegalConfigurationException if the condition does not hold
+	 */
+	@SuppressWarnings("deprecation")
+	protected static void checkNetworkConfigOld(final int numNetworkBuffers) {
+		checkConfigParameter(numNetworkBuffers > 0, numNetworkBuffers,
+			TaskManagerOptions.NETWORK_NUM_BUFFERS.key(),
+			"Must have at least one network buffer");
+	}
+
+	/**
+	 * Validates the (new) network buffer configuration.
+	 *
+	 * @param pageSize 				size of memory buffers
+	 * @param networkBufFraction	fraction of JVM memory to use for network buffers
+	 * @param networkBufMin 		minimum memory size for network buffers (in bytes)
+	 * @param networkBufMax 		maximum memory size for network buffers (in bytes)
+	 *
+	 * @throws IllegalConfigurationException if the condition does not hold
+	 */
+	protected static void checkNetworkBufferConfig(
+			final int pageSize, final float networkBufFraction, final long networkBufMin,
+			final long networkBufMax) throws IllegalConfigurationException {
+
+		checkConfigParameter(networkBufFraction > 0.0f && networkBufFraction < 1.0f, networkBufFraction,
+			TaskManagerOptions.NETWORK_BUFFERS_MEMORY_FRACTION.key(),
+			"Network buffer memory fraction of the free memory must be between 0.0 and 1.0");
+
+		checkConfigParameter(networkBufMin >= pageSize, networkBufMin,
+			TaskManagerOptions.NETWORK_BUFFERS_MEMORY_MIN.key(),
+			"Minimum memory for network buffers must allow at least one network " +
+				"buffer with respect to the memory segment size");
+
+		checkConfigParameter(networkBufMax >= pageSize, networkBufMax,
+			TaskManagerOptions.NETWORK_BUFFERS_MEMORY_MAX.key(),
+			"Maximum memory for network buffers must allow at least one network " +
+				"buffer with respect to the memory segment size");
+
+		checkConfigParameter(networkBufMax >= networkBufMin, networkBufMax,
+			TaskManagerOptions.NETWORK_BUFFERS_MEMORY_MAX.key(),
+			"Maximum memory for network buffers must not be smaller than minimum memory (" +
+				TaskManagerOptions.NETWORK_BUFFERS_MEMORY_MAX.key() + ": " + networkBufMin + ")");
+	}
+
+	/**
+	 * Returns whether the new network buffer memory configuration is present in the configuration
+	 * object, i.e. at least one new parameter is given or the old one is not present.
+	 *
+	 * @param config configuration object
+	 * @return <tt>true</tt> if the new configuration method is used, <tt>false</tt> otherwise
+	 */
+	@SuppressWarnings("deprecation")
+	public static boolean hasNewNetworkBufConf(final Configuration config) {
+		return config.contains(TaskManagerOptions.NETWORK_BUFFERS_MEMORY_FRACTION) ||
+			config.contains(TaskManagerOptions.NETWORK_BUFFERS_MEMORY_MIN) ||
+			config.contains(TaskManagerOptions.NETWORK_BUFFERS_MEMORY_MAX) ||
+			!config.contains(TaskManagerOptions.NETWORK_NUM_BUFFERS);
+	}
+
+	/**
+	 * Creates the {@link QueryableStateConfiguration} from the given Configuration.
+	 */
+	private static QueryableStateConfiguration parseQueryableStateConfiguration(Configuration config) {
+
+		final Iterator<Integer> proxyPorts = NetUtils.getPortRangeFromString(
+				config.getString(QueryableStateOptions.PROXY_PORT_RANGE));
+		final Iterator<Integer> serverPorts = NetUtils.getPortRangeFromString(
+				config.getString(QueryableStateOptions.SERVER_PORT_RANGE));
+
+		final int numProxyServerNetworkThreads = config.getInteger(QueryableStateOptions.PROXY_NETWORK_THREADS);
+		final int numProxyServerQueryThreads = config.getInteger(QueryableStateOptions.PROXY_ASYNC_QUERY_THREADS);
+
+		final int numStateServerNetworkThreads = config.getInteger(QueryableStateOptions.SERVER_NETWORK_THREADS);
+		final int numStateServerQueryThreads = config.getInteger(QueryableStateOptions.SERVER_ASYNC_QUERY_THREADS);
+
+		return new QueryableStateConfiguration(
+				proxyPorts,
+				serverPorts,
+				numProxyServerNetworkThreads,
+				numProxyServerQueryThreads,
+				numStateServerNetworkThreads,
+				numStateServerQueryThreads);
+	}
+
+	/**
+	 * Validates a condition for a config parameter and displays a standard exception, if the
+	 * the condition does not hold.
+	 *
+	 * @param condition             The condition that must hold. If the condition is false, an exception is thrown.
+	 * @param parameter         The parameter value. Will be shown in the exception message.
+	 * @param name              The name of the config parameter. Will be shown in the exception message.
+	 * @param errorMessage  The optional custom error message to append to the exception message.
+	 *
+	 * @throws IllegalConfigurationException if the condition does not hold
+	 */
+	static void checkConfigParameter(boolean condition, Object parameter, String name, String errorMessage)
+			throws IllegalConfigurationException {
+		if (!condition) {
+			throw new IllegalConfigurationException("Invalid configuration value for " +
+					name + " : " + parameter + " - " + errorMessage);
+		}
 	}
 }

@@ -135,7 +135,7 @@ public abstract class AbstractPartitionDiscoverer {
 					// retain topics that match the pattern
 					Iterator<String> iter = matchedTopics.iterator();
 					while (iter.hasNext()) {
-						if (!topicsDescriptor.isMatchingTopic(iter.next())) {
+						if (!topicsDescriptor.getTopicPattern().matcher(iter.next()).matches()) {
 							iter.remove();
 						}
 					}

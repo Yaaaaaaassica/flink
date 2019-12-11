@@ -25,10 +25,52 @@ under the License.
 * TOC
 {:toc}
 
-## Reading from and writing to file systems
+## Reading from file systems
 
-The Apache Flink project supports multiple [file systems]({{ site.baseurl }}/ops/filesystems/index.html) that can be used as backing stores
-for input and output connectors. 
+Flink has build-in support for the following file systems:
+
+| Filesystem                            | Scheme       | Notes  |
+| ------------------------------------- |--------------| ------ |
+| Hadoop Distributed File System (HDFS) &nbsp; | `hdfs://`    | All HDFS versions are supported |
+| Amazon S3                             | `s3://`      | Support through Hadoop file system implementation (see below) |
+| MapR file system                      | `maprfs://`  | The user has to manually place the required jar files in the `lib/` dir |
+| Alluxio                               | `alluxio://` &nbsp; | Support through Hadoop file system implementation (see below) |
+
+
+
+### Using Hadoop file system implementations
+
+Apache Flink allows users to use any file system implementing the `org.apache.hadoop.fs.FileSystem`
+interface. There are Hadoop `FileSystem` implementations for
+
+- [S3](https://aws.amazon.com/s3/) (tested)
+- [Google Cloud Storage Connector for Hadoop](https://cloud.google.com/hadoop/google-cloud-storage-connector) (tested)
+- [Alluxio](http://alluxio.org/) (tested)
+- [XtreemFS](http://www.xtreemfs.org/) (tested)
+- FTP via [Hftp](http://hadoop.apache.org/docs/r1.2.1/hftp.html) (not tested)
+- and many more.
+
+In order to use a Hadoop file system with Flink, make sure that
+
+- the `flink-conf.yaml` has set the `fs.hdfs.hadoopconf` property to the Hadoop configuration directory. For automated testing or running from an IDE the directory containing `flink-conf.yaml` can be set by defining the `FLINK_CONF_DIR` environment variable.
+- the Hadoop configuration (in that directory) has an entry for the required file system in a file `core-site.xml`. Examples for S3 and Alluxio are linked/shown below.
+- the required classes for using the file system are available in the `lib/` folder of the Flink installation (on all machines running Flink). If putting the files into the directory is not possible, Flink also respects the `HADOOP_CLASSPATH` environment variable to add Hadoop jar files to the classpath.
+
+#### Amazon S3
+
+See [Deployment & Operations - Deployment - AWS - S3: Simple Storage Service]({{ site.baseurl }}/ops/deployment/aws.html) for available S3 file system implementations, their configuration and required libraries.
+
+#### Alluxio
+
+For Alluxio support add the following entry into the `core-site.xml` file:
+
+{% highlight xml %}
+<property>
+  <name>fs.alluxio.impl</name>
+  <value>alluxio.hadoop.FileSystem</value>
+</property>
+{% endhighlight %}
+
 
 ## Connecting to other systems using Input/OutputFormat wrappers for Hadoop
 
@@ -42,16 +84,71 @@ users to use all existing Hadoop input formats with Flink.
 This section shows some examples for connecting Flink to other systems.
 [Read more about Hadoop compatibility in Flink]({{ site.baseurl }}/dev/batch/hadoop_compatibility.html).
 
+## Access Hive data in Flink（beta）
+
+Apache Flink develops a HiveTableSource which supports reading hive data from partition or non-partition table, and also support partition-pruning on given partition filter condition. It's implemention is based on aboved `Input/OutputFormat` wrappers for Hadoop. 
+
+To access hive data, add the following dependency to your flink project:
+
+{% highlight xml %}
+<dependency>
+  <groupId>com.alibaba.blink</groupId>
+  <artifactId>flink-connector-hive{{ site.scala_version_suffix }}</artifactId>
+  <version>{{site.version}}</version>
+</dependency>
+
+<dependency>
+  <groupId>com.alibaba.blink</groupId>
+  <artifactId>flink-hadoop-compatibility{{ site.scala_version_suffix }}</artifactId>
+  <version>{{site.version}}</version>
+</dependency>
+{% endhighlight %}
+
+
+Paste the following code into it:
+
+{% highlight java %}
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.table.api.Table;
+import org.apache.flink.table.api.TableConfig;
+import org.apache.flink.table.api.TableConfigOptions;
+import org.apache.flink.table.api.TableEnvironment;
+import org.apache.flink.table.api.java.BatchTableEnvironment;
+import org.apache.flink.table.catalog.ObjectPath;
+import org.apache.flink.table.catalog.hive.HiveCatalog;
+
+public class HiveTableSourceExample {
+
+  public static void main(String[] args) throws Exception {
+    Configuration config = new Configuration();
+    StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironment(1, config);
+    BatchTableEnvironment tEnv = TableEnvironment.getBatchTableEnvironment(env, new TableConfig());
+    tEnv.getConfig().getConf().setInteger(TableConfigOptions.SQL_RESOURCE_SINK_PARALLELISM, 1);
+    tEnv.getConfig().getConf().setInteger(TableConfigOptions.SQL_RESOURCE_DEFAULT_PARALLELISM, 1);
+    // use hiveCatalog to obtain properties from hive metastore
+    HiveCatalog hiveCatalog = new HiveCatalog("myHive","thrift://<ip1>:<port1>;thrift://<ip2>:<port2>;...");
+    hiveCatalog.open();
+    BatchTableSource hiveTableSource = new HiveTableFactory().createBatchTableSource(hiveCatalog.getTable
+        (new ObjectPath("default", "products")).getProperties());
+    tEnv.registerTableSource("products", hiveTableSource);
+    tEnv.sqlQuery("select * from products").print();
+  }
+}
+{% endhighlight %}
+
+
+
 ## Avro support in Flink
 
-Flink has extensive built-in support for [Apache Avro](http://avro.apache.org/). This allows to easily read from Avro files with Flink.
+Flink has extensive build-in support for [Apache Avro](http://avro.apache.org/). This allows to easily read from Avro files with Flink.
 Also, the serialization framework of Flink is able to handle classes generated from Avro schemas. Be sure to include the Flink Avro dependency to the pom.xml of your project.
 
 {% highlight xml %}
 <dependency>
-  <groupId>org.apache.flink</groupId>
+  <groupId>com.alibaba.blink</groupId>
   <artifactId>flink-avro</artifactId>
-  <version>{{ site.version }}</version>
+  <version>{{site.version }}</version>
 </dependency>
 {% endhighlight %}
 
@@ -103,7 +200,7 @@ Execute the following commands:
 
    {% highlight xml %}
    <dependency>
-       <groupId>org.apache.flink</groupId>
+       <groupId>com.alibaba.blink</groupId>
        <artifactId>flink-hadoop-compatibility{{ site.scala_version_suffix }}</artifactId>
        <version>{{site.version}}</version>
    </dependency>
@@ -182,11 +279,5 @@ The example shows how to access an Azure table and turn data into Flink's `DataS
 ## Access MongoDB
 
 This [GitHub repository documents how to use MongoDB with Apache Flink (starting from 0.7-incubating)](https://github.com/okkam-it/flink-mongodb-test).
-
-## Hive Connector
-
-Starting from 1.9.0, Apache Flink provides Hive connector to access Apache Hive tables. [HiveCatalog]({{ site.baseurl }}/dev/table/catalogs.html#hivecatalog) is required in order to use the Hive connector.
-After HiveCatalog is setup, please refer to [Reading & Writing Hive Tables]({{ site.baseurl }}/dev/table/hive/read_write_hive.html) for the usage of the Hive connector and its limitations.
-Same as HiveCatalog, the officially supported Apache Hive versions for Hive connector are 2.3.4 and 1.2.1.
 
 {% top %}

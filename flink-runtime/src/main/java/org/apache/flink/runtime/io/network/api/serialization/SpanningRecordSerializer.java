@@ -46,7 +46,7 @@ public class SpanningRecordSerializer<T extends IOReadableWritable> implements R
 	public SpanningRecordSerializer() {
 		serializationBuffer = new DataOutputSerializer(128);
 
-		// ensure initial state with hasRemaining false (for correct continueWritingWithNextBufferBuilder logic)
+		// ensure initial state with hasRemaining false (for correct copyToBufferBuilder logic)
 		dataBuffer = serializationBuffer.wrapAsByteBuffer();
 	}
 
@@ -64,22 +64,21 @@ public class SpanningRecordSerializer<T extends IOReadableWritable> implements R
 		}
 
 		serializationBuffer.clear();
-		// the initial capacity of the serialization buffer should be no less than 4
-		serializationBuffer.skipBytesToWrite(4);
+		serializationBuffer.position(4);
 
 		// write data and length
 		record.write(serializationBuffer);
 
-		int len = serializationBuffer.length() - 4;
-		serializationBuffer.setPosition(0);
-		serializationBuffer.writeInt(len);
-		serializationBuffer.skipBytesToWrite(len);
+		int len = serializationBuffer.length();
+		serializationBuffer.position(0);
+		serializationBuffer.writeInt(len - 4);
+		serializationBuffer.position(len);
 
 		dataBuffer = serializationBuffer.wrapAsByteBuffer();
 	}
 
 	/**
-	 * Copies an intermediate data serialization buffer into the target BufferBuilder.
+	 * Copies the intermediate data serialization buffer to target BufferBuilder.
 	 *
 	 * @param targetBuffer the target BufferBuilder to copy to
 	 * @return how much information was written to the target buffer and
@@ -116,5 +115,10 @@ public class SpanningRecordSerializer<T extends IOReadableWritable> implements R
 	@Override
 	public boolean hasSerializedData() {
 		return dataBuffer.hasRemaining();
+	}
+
+	@Override
+	public SerializationResult flushToBufferBuilder(BufferBuilder targetBuffer) {
+		return copyToBufferBuilder(targetBuffer);
 	}
 }

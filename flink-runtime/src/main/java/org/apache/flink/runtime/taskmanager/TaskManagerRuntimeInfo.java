@@ -19,10 +19,9 @@
 package org.apache.flink.runtime.taskmanager;
 
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.runtime.taskexecutor.TaskExecutor;
 
 /**
- * Interface to access {@link TaskExecutor} information.
+ * Interface to access {@link TaskManager} information.
  */
 public interface TaskManagerRuntimeInfo {
 

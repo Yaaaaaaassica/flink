@@ -23,33 +23,25 @@ import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.configuration.CheckpointingOptions;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.core.fs.CloseableRegistry;
 import org.apache.flink.core.fs.Path;
-import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.runtime.execution.Environment;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
+import org.apache.flink.runtime.state.AbstractInternalStateBackend;
 import org.apache.flink.runtime.state.AbstractKeyedStateBackend;
-import org.apache.flink.runtime.state.AbstractStateBackend;
-import org.apache.flink.runtime.state.BackendBuildingException;
 import org.apache.flink.runtime.state.CheckpointStorage;
 import org.apache.flink.runtime.state.ConfigurableStateBackend;
-import org.apache.flink.runtime.state.DefaultOperatorStateBackendBuilder;
+import org.apache.flink.runtime.state.DefaultOperatorStateBackend;
 import org.apache.flink.runtime.state.KeyGroupRange;
-import org.apache.flink.runtime.state.KeyedStateHandle;
 import org.apache.flink.runtime.state.OperatorStateBackend;
-import org.apache.flink.runtime.state.OperatorStateHandle;
 import org.apache.flink.runtime.state.TaskStateManager;
 import org.apache.flink.runtime.state.filesystem.AbstractFileStateBackend;
-import org.apache.flink.runtime.state.heap.HeapKeyedStateBackendBuilder;
-import org.apache.flink.runtime.state.heap.HeapPriorityQueueSetFactory;
-import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
+import org.apache.flink.runtime.state.heap.HeapInternalStateBackend;
+import org.apache.flink.runtime.state.heap.HeapKeyedStateBackend;
 import org.apache.flink.util.TernaryBoolean;
 
-import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import java.io.IOException;
-import java.util.Collection;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 
@@ -100,7 +92,7 @@ import static org.apache.flink.util.Preconditions.checkArgument;
  * parameters from the Flink configuration. For example, if the backend if configured in the application
  * without a default savepoint directory, it will pick up a default savepoint directory specified in the
  * Flink configuration of the running job/cluster. That behavior is implemented via the
- * {@link #configure(Configuration, ClassLoader)} method.
+ * {@link #configure(Configuration)} method.
  */
 @PublicEvolving
 public class MemoryStateBackend extends AbstractFileStateBackend implements ConfigurableStateBackend {
@@ -116,6 +108,10 @@ public class MemoryStateBackend extends AbstractFileStateBackend implements Conf
 	/** Switch to chose between synchronous and asynchronous snapshots.
 	 * A value of 'UNDEFINED' means not yet configured, in which case the default will be used. */
 	private final TernaryBoolean asynchronousSnapshots;
+
+	/** Switch to create checkpoint sub-directory with name of jobId.
+	 * A value of 'undefined' means not yet configured, in which case the default will be used. */
+	private TernaryBoolean createCheckpointSubDirs = TernaryBoolean.UNDEFINED;
 
 	// ------------------------------------------------------------------------
 
@@ -213,13 +209,13 @@ public class MemoryStateBackend extends AbstractFileStateBackend implements Conf
 	 *                              runtime configuration will be used.
 	 */
 	public MemoryStateBackend(
-			@Nullable String checkpointPath,
-			@Nullable String savepointPath,
-			int maxStateSize,
-			TernaryBoolean asynchronousSnapshots) {
+		@Nullable String checkpointPath,
+		@Nullable String savepointPath,
+		int maxStateSize,
+		TernaryBoolean asynchronousSnapshots) {
 
 		super(checkpointPath == null ? null : new Path(checkpointPath),
-				savepointPath == null ? null : new Path(savepointPath));
+			savepointPath == null ? null : new Path(savepointPath));
 
 		checkArgument(maxStateSize > 0, "maxStateSize must be > 0");
 		this.maxStateSize = maxStateSize;
@@ -232,9 +228,8 @@ public class MemoryStateBackend extends AbstractFileStateBackend implements Conf
 	 *
 	 * @param original The state backend to re-configure
 	 * @param configuration The configuration
-	 * @param classLoader The class loader
 	 */
-	private MemoryStateBackend(MemoryStateBackend original, Configuration configuration, ClassLoader classLoader) {
+	private MemoryStateBackend(MemoryStateBackend original, Configuration configuration) {
 		super(original.getCheckpointPath(), original.getSavepointPath(), configuration);
 
 		this.maxStateSize = original.maxStateSize;
@@ -242,7 +237,12 @@ public class MemoryStateBackend extends AbstractFileStateBackend implements Conf
 		// if asynchronous snapshots were configured, use that setting,
 		// else check the configuration
 		this.asynchronousSnapshots = original.asynchronousSnapshots.resolveUndefined(
-				configuration.getBoolean(CheckpointingOptions.ASYNC_SNAPSHOTS));
+			configuration.getBoolean(CheckpointingOptions.ASYNC_SNAPSHOTS));
+
+		// if whether to create checkpoint sub-dirs were configured, use that setting,
+		// else check the configuration
+		this.createCheckpointSubDirs = original.createCheckpointSubDirs.resolveUndefined(
+			configuration.getBoolean(CheckpointingOptions.CHCKPOINTS_CREATE_SUBDIRS));
 	}
 
 	// ------------------------------------------------------------------------
@@ -277,13 +277,12 @@ public class MemoryStateBackend extends AbstractFileStateBackend implements Conf
 	 * Creates a copy of this state backend that uses the values defined in the configuration
 	 * for fields where that were not specified in this state backend.
 	 *
-	 * @param config The configuration
-	 * @param classLoader The class loader
+	 * @param config the configuration
 	 * @return The re-configured variant of the state backend
 	 */
 	@Override
-	public MemoryStateBackend configure(Configuration config, ClassLoader classLoader) {
-		return new MemoryStateBackend(this, config, classLoader);
+	public MemoryStateBackend configure(Configuration config) {
+		return new MemoryStateBackend(this, config);
 	}
 
 	// ------------------------------------------------------------------------
@@ -292,7 +291,12 @@ public class MemoryStateBackend extends AbstractFileStateBackend implements Conf
 
 	@Override
 	public CheckpointStorage createCheckpointStorage(JobID jobId) throws IOException {
-		return new MemoryBackendCheckpointStorage(jobId, getCheckpointPath(), getSavepointPath(), maxStateSize);
+		return new MemoryBackendCheckpointStorage(
+			jobId,
+			createCheckpointSubDirs.getOrDefault(CheckpointingOptions.CHCKPOINTS_CREATE_SUBDIRS.defaultValue()),
+			getCheckpointPath(),
+			getSavepointPath(),
+			maxStateSize);
 	}
 
 	// ------------------------------------------------------------------------
@@ -302,16 +306,12 @@ public class MemoryStateBackend extends AbstractFileStateBackend implements Conf
 	@Override
 	public OperatorStateBackend createOperatorStateBackend(
 		Environment env,
-		String operatorIdentifier,
-		@Nonnull Collection<OperatorStateHandle> stateHandles,
-		CloseableRegistry cancelStreamRegistry) throws Exception {
+		String operatorIdentifier) throws Exception {
 
-		return new DefaultOperatorStateBackendBuilder(
+		return new DefaultOperatorStateBackend(
 			env.getUserClassLoader(),
 			env.getExecutionConfig(),
-			isUsingAsynchronousSnapshots(),
-			stateHandles,
-			cancelStreamRegistry).build();
+			isUsingAsynchronousSnapshots());
 	}
 
 	@Override
@@ -322,29 +322,37 @@ public class MemoryStateBackend extends AbstractFileStateBackend implements Conf
 		TypeSerializer<K> keySerializer,
 		int numberOfKeyGroups,
 		KeyGroupRange keyGroupRange,
-		TaskKvStateRegistry kvStateRegistry,
-		TtlTimeProvider ttlTimeProvider,
-		MetricGroup metricGroup,
-		@Nonnull Collection<KeyedStateHandle> stateHandles,
-		CloseableRegistry cancelStreamRegistry) throws BackendBuildingException {
+		TaskKvStateRegistry kvStateRegistry) {
 
 		TaskStateManager taskStateManager = env.getTaskStateManager();
-		HeapPriorityQueueSetFactory priorityQueueSetFactory =
-			new HeapPriorityQueueSetFactory(keyGroupRange, numberOfKeyGroups, 128);
-		return new HeapKeyedStateBackendBuilder<>(
+
+		return new HeapKeyedStateBackend<>(
 			kvStateRegistry,
 			keySerializer,
 			env.getUserClassLoader(),
 			numberOfKeyGroups,
 			keyGroupRange,
-			env.getExecutionConfig(),
-			ttlTimeProvider,
-			stateHandles,
-			AbstractStateBackend.getCompressionDecorator(env.getExecutionConfig()),
-			taskStateManager.createLocalRecoveryConfig(),
-			priorityQueueSetFactory,
 			isUsingAsynchronousSnapshots(),
-			cancelStreamRegistry).build();
+			env.getExecutionConfig(),
+			taskStateManager.createLocalRecoveryConfig());
+	}
+
+	@Override
+	public AbstractInternalStateBackend createInternalStateBackend(
+		Environment env,
+		String operatorIdentifier,
+		int numberOfGroups,
+		KeyGroupRange keyGroupRange) {
+
+		return new HeapInternalStateBackend(
+				numberOfGroups,
+				keyGroupRange,
+				env.getUserClassLoader(),
+				env.getTaskStateManager().createLocalRecoveryConfig(),
+				env.getTaskKvStateRegistry(),
+				isUsingAsynchronousSnapshots(),
+				env.getExecutionConfig()
+			);
 	}
 
 	// ------------------------------------------------------------------------
@@ -354,9 +362,9 @@ public class MemoryStateBackend extends AbstractFileStateBackend implements Conf
 	@Override
 	public String toString() {
 		return "MemoryStateBackend (data in heap memory / checkpoints to JobManager) " +
-				"(checkpoints: '" + getCheckpointPath() +
-				"', savepoints: '" + getSavepointPath() +
-				"', asynchronous: " + asynchronousSnapshots +
-				", maxStateSize: " + maxStateSize + ")";
+			"(checkpoints: '" + getCheckpointPath() +
+			"', savepoints: '" + getSavepointPath() +
+			"', asynchronous: " + asynchronousSnapshots +
+			", maxStateSize: " + maxStateSize + ")";
 	}
 }

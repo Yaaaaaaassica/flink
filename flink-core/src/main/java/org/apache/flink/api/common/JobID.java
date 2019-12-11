@@ -20,13 +20,14 @@ package org.apache.flink.api.common;
 
 import org.apache.flink.annotation.Public;
 import org.apache.flink.util.AbstractID;
-import org.apache.flink.util.StringUtils;
+
+import javax.xml.bind.DatatypeConverter;
 
 import java.nio.ByteBuffer;
 
 /**
  * Unique (at least statistically unique) identifier for a Flink Job. Jobs in Flink correspond
- * to dataflow graphs.
+ * do dataflow graphs.
  * 
  * <p>Jobs act simultaneously as <i>sessions</i>, because jobs can be created and submitted
  * incrementally in different parts. Newer fragments of a graph can be attached to existing
@@ -106,10 +107,9 @@ public final class JobID extends AbstractID {
 	 */
 	public static JobID fromHexString(String hexString) {
 		try {
-			return new JobID(StringUtils.hexStringToByte(hexString));
+			return new JobID(DatatypeConverter.parseHexBinary(hexString));
 		} catch (Exception e) {
-			throw new IllegalArgumentException("Cannot parse JobID from \"" + hexString + "\". The expected format is " +
-				"[0-9a-fA-F]{32}, e.g. fd72014d4c864993a2e5a9287b4a9c5d.", e);
+			throw new IllegalArgumentException("Cannot parse JobID from \"" + hexString + "\".", e);
 		}
 	}
 }

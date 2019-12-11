@@ -30,6 +30,7 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.clients.producer.internals.TransactionalRequestResult;
+import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Metric;
 import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.Node;
@@ -55,13 +56,13 @@ import java.util.concurrent.TimeUnit;
  * Wrapper around KafkaProducer that allows to resume transactions in case of node failure, which allows to implement
  * two phase commit algorithm for exactly-once semantic FlinkKafkaProducer.
  *
- * <p>For happy path usage is exactly the same as {@link org.apache.kafka.clients.producer.KafkaProducer}. User is
+ * <p>For happy path usage is exactly the same as {@link KafkaProducer}. User is
  * expected to call:
  *
  * <ul>
  *     <li>{@link FlinkKafkaProducer#initTransactions()}</li>
  *     <li>{@link FlinkKafkaProducer#beginTransaction()}</li>
- *     <li>{@link FlinkKafkaProducer#send(org.apache.kafka.clients.producer.ProducerRecord)}</li>
+ *     <li>{@link FlinkKafkaProducer#send(ProducerRecord)}</li>
  *     <li>{@link FlinkKafkaProducer#flush()}</li>
  *     <li>{@link FlinkKafkaProducer#commitTransaction()}</li>
  * </ul>
@@ -74,7 +75,7 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *     <li>{@link FlinkKafkaProducer#initTransactions()}</li>
  *     <li>{@link FlinkKafkaProducer#beginTransaction()}</li>
- *     <li>{@link FlinkKafkaProducer#send(org.apache.kafka.clients.producer.ProducerRecord)}</li>
+ *     <li>{@link FlinkKafkaProducer#send(ProducerRecord)}</li>
  *     <li>{@link FlinkKafkaProducer#flush()}</li>
  *     <li>{@link FlinkKafkaProducer#getProducerId()}</li>
  *     <li>{@link FlinkKafkaProducer#getEpoch()}</li>
@@ -87,7 +88,7 @@ import java.util.concurrent.TimeUnit;
  * as a way to obtain the producerId and epoch counters. It has to be done, because otherwise
  * {@link FlinkKafkaProducer#initTransactions()} would automatically abort all on going transactions.
  *
- * <p>Second way this implementation differs from the reference {@link org.apache.kafka.clients.producer.KafkaProducer}
+ * <p>Second way this implementation differs from the reference {@link KafkaProducer}
  * is that this one actually flushes new partitions on {@link FlinkKafkaProducer#flush()} instead of on
  * {@link FlinkKafkaProducer#commitTransaction()}.
  *
@@ -98,7 +99,7 @@ import java.util.concurrent.TimeUnit;
  * <p>Those changes are compatible with Kafka's 0.11.0 REST API although it clearly was not the intention of the Kafka's
  * API authors to make them possible.
  *
- * <p>Internally this implementation uses {@link org.apache.kafka.clients.producer.KafkaProducer} and implements
+ * <p>Internally this implementation uses {@link KafkaProducer} and implements
  * required changes via Java Reflection API. It might not be the prettiest solution. An alternative would be to
  * re-implement whole Kafka's 0.11 REST API client on our own.
  */
@@ -107,62 +108,57 @@ public class FlinkKafkaProducer<K, V> implements Producer<K, V> {
 	private static final Logger LOG = LoggerFactory.getLogger(FlinkKafkaProducer.class);
 
 	private final KafkaProducer<K, V> kafkaProducer;
-	// This lock and closed flag are introduced to workaround KAFKA-6635. Because the bug is only fixed in
-	// Kafka 2.3.0, we need this workaround in 0.11 producer to avoid deadlock between a transaction
-	// committing / aborting thread and a producer closing thread.
-	private final Object producerClosingLock;
-	private volatile boolean closed;
 
 	@Nullable
 	private final String transactionalId;
 
 	public FlinkKafkaProducer(Properties properties) {
 		transactionalId = properties.getProperty(ProducerConfig.TRANSACTIONAL_ID_CONFIG);
-		kafkaProducer = new KafkaProducer<>(properties);
-		producerClosingLock = new Object();
-		closed = false;
+		kafkaProducer = createKafkaProducer(properties);
+	}
+
+	// load KafkaProducer via system classloader instead of application classloader, otherwise we will hit classloading
+	// issue in scala-shell scenario where kafka jar is not shipped with JobGraph, but shipped when starting yarn
+	// container.
+	public static KafkaProducer createKafkaProducer(Properties kafkaProperties) {
+		try {
+			return new KafkaProducer<>(kafkaProperties);
+		} catch (KafkaException e) {
+			ClassLoader original = Thread.currentThread().getContextClassLoader();
+			try {
+				Thread.currentThread().setContextClassLoader(null);
+				return new KafkaProducer<>(kafkaProperties);
+			} finally {
+				Thread.currentThread().setContextClassLoader(original);
+			}
+		}
 	}
 
 	// -------------------------------- Simple proxy method calls --------------------------------
 
 	@Override
 	public void initTransactions() {
-		synchronized (producerClosingLock) {
-			ensureNotClosed();
-			kafkaProducer.initTransactions();
-		}
+		kafkaProducer.initTransactions();
 	}
 
 	@Override
 	public void beginTransaction() throws ProducerFencedException {
-		synchronized (producerClosingLock) {
-			ensureNotClosed();
-			kafkaProducer.beginTransaction();
-		}
+		kafkaProducer.beginTransaction();
 	}
 
 	@Override
 	public void commitTransaction() throws ProducerFencedException {
-		synchronized (producerClosingLock) {
-			ensureNotClosed();
-			kafkaProducer.commitTransaction();
-		}
+		kafkaProducer.commitTransaction();
 	}
 
 	@Override
 	public void abortTransaction() throws ProducerFencedException {
-		synchronized (producerClosingLock) {
-			ensureNotClosed();
-			kafkaProducer.abortTransaction();
-		}
+		kafkaProducer.abortTransaction();
 	}
 
 	@Override
 	public void sendOffsetsToTransaction(Map<TopicPartition, OffsetAndMetadata> offsets, String consumerGroupId) throws ProducerFencedException {
-		synchronized (producerClosingLock) {
-			ensureNotClosed();
-			kafkaProducer.sendOffsetsToTransaction(offsets, consumerGroupId);
-		}
+		kafkaProducer.sendOffsetsToTransaction(offsets, consumerGroupId);
 	}
 
 	@Override
@@ -177,10 +173,7 @@ public class FlinkKafkaProducer<K, V> implements Producer<K, V> {
 
 	@Override
 	public List<PartitionInfo> partitionsFor(String topic) {
-		synchronized (producerClosingLock) {
-			ensureNotClosed();
-			return kafkaProducer.partitionsFor(topic);
-		}
+		return kafkaProducer.partitionsFor(topic);
 	}
 
 	@Override
@@ -190,18 +183,12 @@ public class FlinkKafkaProducer<K, V> implements Producer<K, V> {
 
 	@Override
 	public void close() {
-		closed = true;
-		synchronized (producerClosingLock) {
-			kafkaProducer.close();
-		}
+		kafkaProducer.close();
 	}
 
 	@Override
 	public void close(long timeout, TimeUnit unit) {
-		closed = true;
-		synchronized (producerClosingLock) {
-			kafkaProducer.close(timeout, unit);
-		}
+		kafkaProducer.close(timeout, unit);
 	}
 
 	// -------------------------------- New methods or methods with changed behaviour --------------------------------
@@ -210,56 +197,37 @@ public class FlinkKafkaProducer<K, V> implements Producer<K, V> {
 	public void flush() {
 		kafkaProducer.flush();
 		if (transactionalId != null) {
-			synchronized (producerClosingLock) {
-				ensureNotClosed();
-				flushNewPartitions();
-			}
+			flushNewPartitions();
 		}
 	}
 
 	/**
 	 * Instead of obtaining producerId and epoch from the transaction coordinator, re-use previously obtained ones,
 	 * so that we can resume transaction after a restart. Implementation of this method is based on
-	 * {@link org.apache.kafka.clients.producer.KafkaProducer#initTransactions}.
+	 * {@link KafkaProducer#initTransactions}.
 	 */
 	public void resumeTransaction(long producerId, short epoch) {
-		synchronized (producerClosingLock) {
-			ensureNotClosed();
-			Preconditions.checkState(producerId >= 0 && epoch >= 0,
-				"Incorrect values for producerId %s and epoch %s",
-				producerId,
-				epoch);
-			LOG.info("Attempting to resume transaction {} with producerId {} and epoch {}",
-				transactionalId,
-				producerId,
-				epoch);
+		Preconditions.checkState(producerId >= 0 && epoch >= 0, "Incorrect values for producerId {} and epoch {}", producerId, epoch);
+		LOG.info("Attempting to resume transaction {} with producerId {} and epoch {}", transactionalId, producerId, epoch);
 
-			Object transactionManager = getValue(kafkaProducer, "transactionManager");
-			synchronized (transactionManager) {
-				Object sequenceNumbers = getValue(transactionManager, "sequenceNumbers");
+		Object transactionManager = getValue(kafkaProducer, "transactionManager");
+		synchronized (transactionManager) {
+			Object sequenceNumbers = getValue(transactionManager, "sequenceNumbers");
 
-				invoke(transactionManager,
-					"transitionTo",
-					getEnum("org.apache.kafka.clients.producer.internals.TransactionManager$State.INITIALIZING"));
-				invoke(sequenceNumbers, "clear");
+			invoke(transactionManager, "transitionTo", getEnum("org.apache.kafka.clients.producer.internals.TransactionManager$State.INITIALIZING"));
+			invoke(sequenceNumbers, "clear");
 
-				Object producerIdAndEpoch = getValue(transactionManager, "producerIdAndEpoch");
-				setValue(producerIdAndEpoch, "producerId", producerId);
-				setValue(producerIdAndEpoch, "epoch", epoch);
+			Object producerIdAndEpoch = getValue(transactionManager, "producerIdAndEpoch");
+			setValue(producerIdAndEpoch, "producerId", producerId);
+			setValue(producerIdAndEpoch, "epoch", epoch);
 
-				invoke(transactionManager,
-					"transitionTo",
-					getEnum("org.apache.kafka.clients.producer.internals.TransactionManager$State.READY"));
+			invoke(transactionManager, "transitionTo", getEnum("org.apache.kafka.clients.producer.internals.TransactionManager$State.READY"));
 
-				invoke(transactionManager,
-					"transitionTo",
-					getEnum("org.apache.kafka.clients.producer.internals.TransactionManager$State.IN_TRANSACTION"));
-				setValue(transactionManager, "transactionStarted", true);
-			}
+			invoke(transactionManager, "transitionTo", getEnum("org.apache.kafka.clients.producer.internals.TransactionManager$State.IN_TRANSACTION"));
+			setValue(transactionManager, "transactionStarted", true);
 		}
 	}
 
-	@Nullable
 	public String getTransactionalId() {
 		return transactionalId;
 	}
@@ -283,14 +251,8 @@ public class FlinkKafkaProducer<K, V> implements Producer<K, V> {
 		return node.id();
 	}
 
-	private void ensureNotClosed() {
-		if (closed) {
-			throw new IllegalStateException("The producer has already been closed");
-		}
-	}
-
 	/**
-	 * Besides committing {@link org.apache.kafka.clients.producer.KafkaProducer#commitTransaction} is also adding new
+	 * Besides committing {@link KafkaProducer#commitTransaction} is also adding new
 	 * partitions to the transaction. flushNewPartitions method is moving this logic to pre-commit/flush, to make
 	 * resumeTransaction simpler. Otherwise resumeTransaction would require to restore state of the not yet added/"in-flight"
 	 * partitions.

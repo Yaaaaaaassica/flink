@@ -18,7 +18,6 @@
 package org.apache.flink.streaming.runtime.partitioner;
 
 import org.apache.flink.annotation.Internal;
-import org.apache.flink.runtime.plugable.SerializationDelegate;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 
 import java.util.Random;
@@ -36,9 +35,11 @@ public class ShufflePartitioner<T> extends StreamPartitioner<T> {
 
 	private Random random = new Random();
 
+	private final int[] returnArray = new int[1];
+
 	@Override
-	public int selectChannel(SerializationDelegate<StreamRecord<T>> record) {
-		return random.nextInt(numberOfChannels);
+	public int selectChannel(StreamRecord<T> record, int numberOfOutputChannels) {
+		return random.nextInt(numberOfOutputChannels);
 	}
 
 	@Override

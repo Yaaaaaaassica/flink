@@ -21,7 +21,6 @@ package org.apache.flink.mesos.entrypoint;
 import org.apache.flink.configuration.AkkaOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.fs.FileSystem;
-import org.apache.flink.core.plugin.PluginUtils;
 import org.apache.flink.mesos.runtime.clusterframework.MesosConfigKeys;
 import org.apache.flink.runtime.clusterframework.BootstrapTools;
 import org.apache.flink.runtime.clusterframework.types.ResourceID;
@@ -31,7 +30,6 @@ import org.apache.flink.runtime.taskexecutor.TaskManagerRunner;
 import org.apache.flink.runtime.util.EnvironmentInformation;
 import org.apache.flink.runtime.util.JvmShutdownSafeguard;
 import org.apache.flink.runtime.util.SignalHandler;
-import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.Preconditions;
 
 import org.apache.commons.cli.CommandLine;
@@ -41,8 +39,9 @@ import org.apache.commons.cli.PosixParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.reflect.UndeclaredThrowableException;
+import java.io.IOException;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 /**
  * The entry point for running a TaskManager in a Mesos container.
@@ -86,7 +85,11 @@ public class MesosTaskExecutorRunner {
 		final Map<String, String> envs = System.getenv();
 
 		// configure the filesystems
-		FileSystem.initialize(configuration, PluginUtils.createPluginManagerFromRootFolder(configuration));
+		try {
+			FileSystem.initialize(configuration);
+		} catch (IOException e) {
+			throw new IOException("Error while configuring the filesystems.", e);
+		}
 
 		// tell akka to die in case of an error
 		configuration.setBoolean(AkkaOptions.JVM_EXIT_ON_FATAL_ERROR, true);
@@ -101,15 +104,17 @@ public class MesosTaskExecutorRunner {
 		SecurityUtils.install(sc);
 
 		try {
-			SecurityUtils.getInstalledContext().runSecured(() -> {
-				TaskManagerRunner.runTaskManager(configuration, resourceId);
+			SecurityUtils.getInstalledContext().runSecured(new Callable<Integer>() {
+				@Override
+				public Integer call() throws Exception {
+					TaskManagerRunner.runTaskManager(configuration, resourceId);
 
-				return 0;
+					return 0;
+				}
 			});
 		}
 		catch (Throwable t) {
-			final Throwable strippedThrowable = ExceptionUtils.stripException(t, UndeclaredThrowableException.class);
-			LOG.error("Error while starting the TaskManager", strippedThrowable);
+			LOG.error("Error while starting the TaskManager", t);
 			System.exit(INIT_ERROR_EXIT_CODE);
 		}
 	}

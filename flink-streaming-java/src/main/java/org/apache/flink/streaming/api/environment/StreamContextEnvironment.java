@@ -19,11 +19,15 @@ package org.apache.flink.streaming.api.environment;
 
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.api.common.JobExecutionResult;
-import org.apache.flink.client.ClientUtils;
-import org.apache.flink.client.FlinkPipelineTranslationUtil;
+import org.apache.flink.api.common.JobID;
 import org.apache.flink.client.program.ContextEnvironment;
-import org.apache.flink.runtime.jobgraph.JobGraph;
+import org.apache.flink.client.program.DetachedEnvironment;
+import org.apache.flink.runtime.jobgraph.SavepointRestoreSettings;
 import org.apache.flink.streaming.api.graph.StreamGraph;
+import org.apache.flink.util.Preconditions;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Special {@link StreamExecutionEnvironment} that will be used in cases where the CLI client or
@@ -32,6 +36,8 @@ import org.apache.flink.streaming.api.graph.StreamGraph;
  */
 @PublicEvolving
 public class StreamContextEnvironment extends StreamExecutionEnvironment {
+
+	private static final Logger LOG = LoggerFactory.getLogger(StreamContextEnvironment.class);
 
 	private final ContextEnvironment ctx;
 
@@ -46,23 +52,52 @@ public class StreamContextEnvironment extends StreamExecutionEnvironment {
 	public JobExecutionResult execute(StreamGraph streamGraph) throws Exception {
 		transformations.clear();
 
-		JobGraph jobGraph = FlinkPipelineTranslationUtil.getJobGraph(
-				streamGraph,
-				ctx.getClient().getFlinkConfiguration(),
-				getParallelism());
+		// execute the programs
+		if (ctx instanceof DetachedEnvironment) {
+			LOG.warn("Job was executed in detached mode, the results will be available on completion.");
+			((DetachedEnvironment) ctx).setDetachedPlan(streamGraph);
+			return DetachedEnvironment.DetachedJobExecutionResult.INSTANCE;
+		} else {
+			return ctx
+				.getClient()
+				.run(streamGraph, ctx.getJars(), ctx.getClasspaths(), ctx.getLibjars(), ctx.getFiles(), ctx.getUserCodeClassLoader(), ctx.getSavepointRestoreSettings(), false)
+				.getJobExecutionResult();
+		}
+	}
 
-		ClientUtils.addJarFiles(jobGraph, ctx.getJars());
-		jobGraph.setClasspaths(ctx.getClasspaths());
+	@Override
+	protected JobExecutionResult executeInternal(String jobName, boolean detached, SavepointRestoreSettings savepointRestoreSettings) throws Exception {
+		Preconditions.checkNotNull(jobName, "Streaming Job name should not be null.");
 
-		// running from the CLI will override the savepoint restore settings
-		jobGraph.setSavepointRestoreSettings(ctx.getSavepointRestoreSettings());
+		StreamGraph streamGraph = this.getStreamGraph();
+		streamGraph.setJobName(jobName);
 
-		JobExecutionResult jobExecutionResult =  ctx.getClient()
-			.submitJob(jobGraph, ctx.getUserCodeClassLoader())
-			.getJobExecutionResult();
+		transformations.clear();
 
-		ctx.setJobExecutionResult(jobExecutionResult);
+		// execute the programs
+		if (ctx instanceof DetachedEnvironment) {
+			LOG.warn("Job was executed in detached mode, the results will be available on completion.");
+			((DetachedEnvironment) ctx).setDetachedPlan(streamGraph);
+			return DetachedEnvironment.DetachedJobExecutionResult.INSTANCE;
+		} else {
+			return ctx
+				.getClient()
+				.run(streamGraph, ctx.getJars(), ctx.getClasspaths(), ctx.getLibjars(), ctx.getFiles(), ctx.getUserCodeClassLoader(), ctx.getSavepointRestoreSettings(), detached)
+				.getJobExecutionResult();
+		}
+	}
 
-		return jobExecutionResult;
+	@Override
+	public void stopJob(JobID jobID) throws Exception {
+				ctx.getClient().stop(jobID);
+	}
+
+	public void cancel(String jobId) {
+
+	}
+
+	@Override
+	public String triggerSavepoint(String jobId, String path) {
+		return null;
 	}
 }

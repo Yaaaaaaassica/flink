@@ -87,6 +87,7 @@ class CreditBasedSequenceNumberingViewReader implements BufferAvailabilityListen
 					resultPartitionId,
 					subPartitionIndex,
 					this);
+				subpartitionView.notifyCreditAdded(numCreditsAvailable);
 			} else {
 				throw new IllegalStateException("Subpartition already requested");
 			}
@@ -96,6 +97,7 @@ class CreditBasedSequenceNumberingViewReader implements BufferAvailabilityListen
 	@Override
 	public void addCredit(int creditDeltas) {
 		numCreditsAvailable += creditDeltas;
+		subpartitionView.notifyCreditAdded(creditDeltas);
 	}
 
 	@Override
@@ -170,6 +172,11 @@ class CreditBasedSequenceNumberingViewReader implements BufferAvailabilityListen
 		} else {
 			return null;
 		}
+	}
+
+	@Override
+	public void notifySubpartitionConsumed() throws IOException {
+		subpartitionView.notifySubpartitionConsumed();
 	}
 
 	@Override

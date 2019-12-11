@@ -21,7 +21,6 @@ package org.apache.flink.streaming.connectors.cassandra;
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
-import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.api.java.tuple.Tuple;
 import org.apache.flink.api.java.typeutils.PojoTypeInfo;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
@@ -30,13 +29,13 @@ import org.apache.flink.api.scala.typeutils.CaseClassTypeInfo;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSink;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.transformations.SinkTransformation;
+import org.apache.flink.streaming.api.transformations.StreamTransformation;
 import org.apache.flink.streaming.runtime.operators.CheckpointCommitter;
 import org.apache.flink.types.Row;
 
 import com.datastax.driver.core.Cluster;
-
-import java.time.Duration;
 
 import scala.Product;
 
@@ -60,11 +59,15 @@ public class CassandraSink<IN> {
 		useDataStreamSink = false;
 	}
 
+	public DataStreamSink<IN> getSink1() {
+		return sink1;
+	}
+
 	private SinkTransformation<IN> getSinkTransformation() {
 		return sink1.getTransformation();
 	}
 
-	private Transformation<IN> getTransformation() {
+	private StreamTransformation<IN> getStreamTransformation() {
 		return sink2.getTransformation();
 	}
 
@@ -78,7 +81,7 @@ public class CassandraSink<IN> {
 		if (useDataStreamSink) {
 			getSinkTransformation().setName(name);
 		} else {
-			getTransformation().setName(name);
+			getStreamTransformation().setName(name);
 		}
 		return this;
 	}
@@ -100,7 +103,7 @@ public class CassandraSink<IN> {
 		if (useDataStreamSink) {
 			getSinkTransformation().setUid(uid);
 		} else {
-			getTransformation().setUid(uid);
+			getStreamTransformation().setUid(uid);
 		}
 		return this;
 	}
@@ -128,7 +131,7 @@ public class CassandraSink<IN> {
 		if (useDataStreamSink) {
 			getSinkTransformation().setUidHash(uidHash);
 		} else {
-			getTransformation().setUidHash(uidHash);
+			getStreamTransformation().setUidHash(uidHash);
 		}
 		return this;
 	}
@@ -141,9 +144,9 @@ public class CassandraSink<IN> {
 	 */
 	public CassandraSink<IN> setParallelism(int parallelism) {
 		if (useDataStreamSink) {
-			sink1.setParallelism(parallelism);
+			getSinkTransformation().setParallelism(parallelism);
 		} else {
-			sink2.setParallelism(parallelism);
+			getStreamTransformation().setParallelism(parallelism);
 		}
 		return this;
 	}
@@ -161,9 +164,9 @@ public class CassandraSink<IN> {
 	 */
 	public CassandraSink<IN> disableChaining() {
 		if (useDataStreamSink) {
-			sink1.disableChaining();
+			getSinkTransformation().setChainingStrategy(ChainingStrategy.NEVER);
 		} else {
-			sink2.disableChaining();
+			getStreamTransformation().setChainingStrategy(ChainingStrategy.NEVER);
 		}
 		return this;
 	}
@@ -185,7 +188,7 @@ public class CassandraSink<IN> {
 		if (useDataStreamSink) {
 			getSinkTransformation().setSlotSharingGroup(slotSharingGroup);
 		} else {
-			getTransformation().setSlotSharingGroup(slotSharingGroup);
+			getStreamTransformation().setSlotSharingGroup(slotSharingGroup);
 		}
 		return this;
 	}
@@ -236,20 +239,16 @@ public class CassandraSink<IN> {
 		protected final DataStream<IN> input;
 		protected final TypeSerializer<IN> serializer;
 		protected final TypeInformation<IN> typeInfo;
-		protected final CassandraSinkBaseConfig.Builder configBuilder;
 		protected ClusterBuilder builder;
-		protected String keyspace;
 		protected MapperOptions mapperOptions;
 		protected String query;
 		protected CheckpointCommitter committer;
 		protected boolean isWriteAheadLogEnabled;
-		protected CassandraFailureHandler failureHandler;
 
 		public CassandraSinkBuilder(DataStream<IN> input, TypeInformation<IN> typeInfo, TypeSerializer<IN> serializer) {
 			this.input = input;
 			this.typeInfo = typeInfo;
 			this.serializer = serializer;
-			this.configBuilder = CassandraSinkBaseConfig.newBuilder();
 		}
 
 		/**
@@ -260,17 +259,6 @@ public class CassandraSink<IN> {
 		 */
 		public CassandraSinkBuilder<IN> setQuery(String query) {
 			this.query = query;
-			return this;
-		}
-
-		/**
-		 * Sets the keyspace to be used.
-		 *
-		 * @param keyspace keyspace to use
-		 * @return this builder
-		 */
-		public CassandraSinkBuilder<IN> setDefaultKeyspace(String keyspace) {
-			this.keyspace = keyspace;
 			return this;
 		}
 
@@ -359,59 +347,6 @@ public class CassandraSink<IN> {
 		}
 
 		/**
-		 * Sets the failure handler for this sink. The failure handler is used to provide custom error handling.
-		 *
-		 * @param failureHandler CassandraFailureHandler, that handles any Throwable error.
-		 *
-		 * @return this builder
-		 */
-		public CassandraSinkBuilder<IN> setFailureHandler(CassandraFailureHandler failureHandler) {
-			this.failureHandler = failureHandler;
-			return this;
-		}
-
-		/**
-		 * Sets the maximum allowed number of concurrent requests for this sink.
-		 *
-		 * <p>This call has no effect if {@link CassandraSinkBuilder#enableWriteAheadLog()} is called.
-		 *
-		 * @param maxConcurrentRequests maximum number of concurrent requests allowed
-		 * @param timeout timeout duration when acquiring a permit to execute
-		 * @return this builder
-		 */
-		public CassandraSinkBuilder<IN> setMaxConcurrentRequests(int maxConcurrentRequests, Duration timeout) {
-			this.configBuilder.setMaxConcurrentRequests(maxConcurrentRequests);
-			this.configBuilder.setMaxConcurrentRequestsTimeout(timeout);
-			return this;
-		}
-
-		/**
-		 * Sets the maximum allowed number of concurrent requests for this sink.
-		 *
-		 * <p>This call has no effect if {@link CassandraSinkBuilder#enableWriteAheadLog()} is called.
-		 *
-		 * @param maxConcurrentRequests maximum number of concurrent requests allowed
-		 * @return this builder
-		 */
-		public CassandraSinkBuilder<IN> setMaxConcurrentRequests(int maxConcurrentRequests) {
-			this.configBuilder.setMaxConcurrentRequests(maxConcurrentRequests);
-			return this;
-		}
-
-		/**
-		 * Enables ignoring null values, treats null values as unset and avoids writing null fields
-		 * and creating tombstones.
-		 *
-		 * <p>This call has no effect if {@link CassandraSinkBuilder#enableWriteAheadLog()} is called.
-		 *
-		 * @return this builder
-		 */
-		public CassandraSinkBuilder<IN> enableIgnoreNullFields() {
-			this.configBuilder.setIgnoreNullFields(true);
-			return this;
-		}
-
-		/**
 		 * Finalizes the configuration of this sink.
 		 *
 		 * @return finalized sink
@@ -419,9 +354,6 @@ public class CassandraSink<IN> {
 		 */
 		public CassandraSink<IN> build() throws Exception {
 			sanityCheck();
-			if (failureHandler == null) {
-				failureHandler = new NoOpCassandraFailureHandler();
-			}
 			return isWriteAheadLogEnabled
 				? createWriteAheadSink()
 				: createSink();
@@ -453,19 +385,11 @@ public class CassandraSink<IN> {
 			if (query == null || query.length() == 0) {
 				throw new IllegalArgumentException("Query must not be null or empty.");
 			}
-			if (keyspace != null) {
-				throw new IllegalArgumentException("Specifying a default keyspace is only allowed when using a Pojo-Stream as input.");
-			}
 		}
 
 		@Override
 		public CassandraSink<IN> createSink() throws Exception {
-			final CassandraTupleSink<IN> sink = new CassandraTupleSink<>(
-				query,
-				builder,
-				configBuilder.build(),
-				failureHandler);
-			return new CassandraSink<>(input.addSink(sink).name("Cassandra Sink"));
+			return new CassandraSink<>(input.addSink(new CassandraTupleSink<IN>(query, builder)).name("Cassandra Sink"));
 		}
 
 		@Override
@@ -490,20 +414,12 @@ public class CassandraSink<IN> {
 			if (query == null || query.length() == 0) {
 				throw new IllegalArgumentException("Query must not be null or empty.");
 			}
-			if (keyspace != null) {
-				throw new IllegalArgumentException("Specifying a default keyspace is only allowed when using a Pojo-Stream as input.");
-			}
 		}
 
 		@Override
 		protected CassandraSink<Row> createSink() throws Exception {
-			final CassandraRowSink sink = new CassandraRowSink(
-				typeInfo.getArity(),
-				query,
-				builder,
-				configBuilder.build(),
-				failureHandler);
-			return new CassandraSink<>(input.addSink(sink).name("Cassandra Sink"));
+			return new CassandraSink<>(input.addSink(new CassandraRowSink(typeInfo.getArity(), query, builder)).name("Cassandra Sink"));
+
 		}
 
 		@Override
@@ -533,14 +449,7 @@ public class CassandraSink<IN> {
 
 		@Override
 		public CassandraSink<IN> createSink() throws Exception {
-			final CassandraPojoSink<IN> sink = new CassandraPojoSink<>(
-				typeInfo.getTypeClass(),
-				builder,
-				mapperOptions,
-				keyspace,
-				configBuilder.build(),
-				failureHandler);
-			return new CassandraSink<>(input.addSink(sink).name("Cassandra Sink"));
+			return new CassandraSink<>(input.addSink(new CassandraPojoSink<>(typeInfo.getTypeClass(), builder, mapperOptions)).name("Cassandra Sink"));
 		}
 
 		@Override
@@ -554,6 +463,7 @@ public class CassandraSink<IN> {
 	 * @param <IN>
 	 */
 	public static class CassandraScalaProductSinkBuilder<IN extends Product> extends CassandraSinkBuilder<IN> {
+
 		public CassandraScalaProductSinkBuilder(DataStream<IN> input, TypeInformation<IN> typeInfo, TypeSerializer<IN> serializer) {
 			super(input, typeInfo, serializer);
 		}
@@ -564,19 +474,11 @@ public class CassandraSink<IN> {
 			if (query == null || query.length() == 0) {
 				throw new IllegalArgumentException("Query must not be null or empty.");
 			}
-			if (keyspace != null) {
-				throw new IllegalArgumentException("Specifying a default keyspace is only allowed when using a Pojo-Stream as input.");
-			}
 		}
 
 		@Override
 		public CassandraSink<IN> createSink() throws Exception {
-			final CassandraScalaProductSink<IN> sink = new CassandraScalaProductSink<>(
-				query,
-				builder,
-				configBuilder.build(),
-				failureHandler);
-			return new CassandraSink<>(input.addSink(sink).name("Cassandra Sink"));
+			return new CassandraSink<>(input.addSink(new CassandraScalaProductSink<IN>(query, builder)).name("Cassandra Sink"));
 		}
 
 		@Override

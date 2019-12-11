@@ -18,14 +18,16 @@
 package org.apache.flink.streaming.api.graph;
 
 import org.apache.flink.annotation.Internal;
-import org.apache.flink.streaming.api.transformations.ShuffleMode;
+import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.runtime.io.network.DataExchangeMode;
+import org.apache.flink.runtime.jobgraph.EdgeID;
+import org.apache.flink.runtime.operators.DamBehavior;
 import org.apache.flink.streaming.runtime.partitioner.StreamPartitioner;
 import org.apache.flink.util.OutputTag;
 
 import java.io.Serializable;
 import java.util.List;
-
-import static org.apache.flink.util.Preconditions.checkNotNull;
+import java.util.Objects;
 
 /**
  * An edge in the streaming topology. One edge like this does not necessarily
@@ -37,7 +39,9 @@ public class StreamEdge implements Serializable {
 
 	private static final long serialVersionUID = 1L;
 
-	private final String edgeId;
+	private final EdgeID edgeID;
+
+	private final String edgeName;
 
 	private final int sourceId;
 	private final int targetId;
@@ -64,43 +68,42 @@ public class StreamEdge implements Serializable {
 	private StreamPartitioner<?> outputPartitioner;
 
 	/**
-	 * The name of the operator in the source vertex.
+	 * The {@link DataExchangeMode} on this {@link StreamEdge}.
 	 */
-	private final String sourceOperatorName;
+	private DataExchangeMode dataExchangeMode;
 
 	/**
-	 * The name of the operator in the target vertex.
+	 * The {@link DamBehavior} of the source operator on this {@link StreamEdge}.
 	 */
-	private final String targetOperatorName;
+	private final DamBehavior damBehavior;
 
-	private final ShuffleMode shuffleMode;
-
+	@VisibleForTesting
 	public StreamEdge(StreamNode sourceVertex, StreamNode targetVertex, int typeNumber,
 			List<String> selectedNames, StreamPartitioner<?> outputPartitioner, OutputTag outputTag) {
-		this(sourceVertex,
-				targetVertex,
-				typeNumber,
-				selectedNames,
-				outputPartitioner,
-				outputTag,
-				ShuffleMode.UNDEFINED);
+		this(sourceVertex, targetVertex, typeNumber, selectedNames, outputPartitioner, outputTag,
+			DataExchangeMode.PIPELINED, DamBehavior.PIPELINED);
 	}
 
 	public StreamEdge(StreamNode sourceVertex, StreamNode targetVertex, int typeNumber,
 			List<String> selectedNames, StreamPartitioner<?> outputPartitioner, OutputTag outputTag,
-			ShuffleMode shuffleMode) {
+			DataExchangeMode dataExchangeMode, DamBehavior damBehavior) {
 		this.sourceId = sourceVertex.getId();
 		this.targetId = targetVertex.getId();
 		this.typeNumber = typeNumber;
 		this.selectedNames = selectedNames;
 		this.outputPartitioner = outputPartitioner;
 		this.outputTag = outputTag;
-		this.sourceOperatorName = sourceVertex.getOperatorName();
-		this.targetOperatorName = targetVertex.getOperatorName();
-		this.shuffleMode = checkNotNull(shuffleMode);
+		this.dataExchangeMode = dataExchangeMode;
+		this.damBehavior = damBehavior;
 
-		this.edgeId = sourceVertex + "_" + targetVertex + "_" + typeNumber + "_" + selectedNames
+		this.edgeID = new EdgeID();
+
+		this.edgeName = sourceVertex + "_" + targetVertex + "_" + typeNumber + "_" + selectedNames
 				+ "_" + outputPartitioner;
+	}
+
+	public EdgeID getEdgeID() {
+		return edgeID;
 	}
 
 	public int getSourceId() {
@@ -127,17 +130,25 @@ public class StreamEdge implements Serializable {
 		return outputPartitioner;
 	}
 
-	public ShuffleMode getShuffleMode() {
-		return shuffleMode;
+	public DataExchangeMode getDataExchangeMode() {
+		return dataExchangeMode;
+	}
+
+	public DamBehavior getDamBehavior() {
+		return this.damBehavior;
 	}
 
 	public void setPartitioner(StreamPartitioner<?> partitioner) {
 		this.outputPartitioner = partitioner;
 	}
 
+	public void setDataExchangeMode(DataExchangeMode dataExchangeMode) {
+		this.dataExchangeMode = dataExchangeMode;
+	}
+
 	@Override
 	public int hashCode() {
-		return edgeId.hashCode();
+		return Objects.hash(edgeName, edgeID);
 	}
 
 	@Override
@@ -151,13 +162,13 @@ public class StreamEdge implements Serializable {
 
 		StreamEdge that = (StreamEdge) o;
 
-		return edgeId.equals(that.edgeId);
+		return edgeName.equals(that.edgeName) && edgeID.equals(that.getEdgeID());
 	}
 
 	@Override
 	public String toString() {
-		return "(" + (sourceOperatorName + "-" + sourceId) + " -> " + (targetOperatorName + "-" + targetId)
-			+ ", typeNumber=" + typeNumber + ", selectedNames=" + selectedNames + ", outputPartitioner=" + outputPartitioner
-			+ ", outputTag=" + outputTag + ')';
+		return "(" + sourceId + " -> " + targetId + ", typeNumber=" + typeNumber
+				+ ", selectedNames=" + selectedNames + ", outputPartitioner=" + outputPartitioner
+				+ ", outputTag=" + outputTag + ", dataExchangeMode=" + dataExchangeMode + ", edgeID=" + edgeID + ')';
 	}
 }

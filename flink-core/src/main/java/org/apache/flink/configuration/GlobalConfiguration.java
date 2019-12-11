@@ -19,6 +19,7 @@
 package org.apache.flink.configuration;
 
 import org.apache.flink.annotation.Internal;
+import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.util.Preconditions;
 
 import org.slf4j.Logger;
@@ -63,23 +64,11 @@ public final class GlobalConfiguration {
 	 * @return Returns the Configuration
 	 */
 	public static Configuration loadConfiguration() {
-		return loadConfiguration(new Configuration());
-	}
-
-	/**
-	 * Loads the global configuration and adds the given dynamic properties
-	 * configuration.
-	 *
-	 * @param dynamicProperties The given dynamic properties
-	 * @return Returns the loaded global configuration with dynamic properties
-	 */
-	public static Configuration loadConfiguration(Configuration dynamicProperties) {
 		final String configDir = System.getenv(ConfigConstants.ENV_FLINK_CONF_DIR);
 		if (configDir == null) {
-			return new Configuration(dynamicProperties);
+			return new Configuration();
 		}
-
-		return loadConfiguration(configDir, dynamicProperties);
+		return loadConfiguration(configDir, null);
 	}
 
 	/**
@@ -130,32 +119,23 @@ public final class GlobalConfiguration {
 			configuration.addAll(dynamicProperties);
 		}
 
-		return enrichWithEnvironmentVariables(configuration);
-	}
-
-	private static Configuration enrichWithEnvironmentVariables(Configuration configuration) {
-		enrichWithEnvironmentVariable(ConfigConstants.ENV_FLINK_PLUGINS_DIR, configuration);
 		return configuration;
 	}
 
-	private static void enrichWithEnvironmentVariable(String environmentVariable, Configuration configuration) {
-		String valueFromEnv = System.getenv(environmentVariable);
-
-		if (valueFromEnv == null) {
-			return;
+	/**
+	 * Loads the global configuration and adds the given dynamic properties
+	 * configuration.
+	 *
+	 * @param dynamicProperties The given dynamic properties
+	 * @return Returns the loaded global configuration with dynamic properties
+	 */
+	public static Configuration loadConfigurationWithDynamicProperties(Configuration dynamicProperties) {
+		final String configDir = System.getenv(ConfigConstants.ENV_FLINK_CONF_DIR);
+		if (configDir == null) {
+			return new Configuration(dynamicProperties);
 		}
 
-		String valueFromConfig = configuration.getString(environmentVariable, valueFromEnv);
-
-		if (!valueFromEnv.equals(valueFromConfig)) {
-			throw new IllegalConfigurationException(
-				"The given configuration file already contains a value (" + valueFromEnv +
-					") for the key (" + environmentVariable +
-					") that would have been overwritten with (" + valueFromConfig +
-					") by an environment with the same name.");
-		}
-
-		configuration.setString(environmentVariable, valueFromEnv);
+		return loadConfiguration(configDir, dynamicProperties);
 	}
 
 	/**
@@ -178,7 +158,8 @@ public final class GlobalConfiguration {
 	 * @param file the YAML file to read from
 	 * @see <a href="http://www.yaml.org/spec/1.2/spec.html">YAML 1.2 specification</a>
 	 */
-	private static Configuration loadYAMLResource(File file) {
+	@VisibleForTesting
+	public static Configuration loadYAMLResource(File file) {
 		final Configuration config = new Configuration();
 
 		try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)))){

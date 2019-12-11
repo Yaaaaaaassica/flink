@@ -19,15 +19,16 @@
 package org.apache.flink.api.java.io.jdbc;
 
 import org.apache.flink.annotation.VisibleForTesting;
-import org.apache.flink.api.common.typeinfo.TypeInformation;
-import org.apache.flink.api.java.DataSet;
-import org.apache.flink.api.java.typeutils.RowTypeInfo;
+import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSink;
+import org.apache.flink.table.api.TableConfig;
+import org.apache.flink.table.api.types.DataType;
+import org.apache.flink.table.api.types.DataTypes;
 import org.apache.flink.table.sinks.AppendStreamTableSink;
 import org.apache.flink.table.sinks.BatchTableSink;
 import org.apache.flink.table.sinks.TableSink;
-import org.apache.flink.table.utils.TableConnectorUtils;
+import org.apache.flink.table.util.TableConnectorUtil;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.InstantiationUtil;
 import org.apache.flink.util.Preconditions;
@@ -50,7 +51,7 @@ public class JDBCAppendTableSink implements AppendStreamTableSink<Row>, BatchTab
 	private final JDBCOutputFormat outputFormat;
 
 	private String[] fieldNames;
-	private TypeInformation[] fieldTypes;
+	private DataType[] fieldTypes;
 
 	JDBCAppendTableSink(JDBCOutputFormat outputFormat) {
 		this.outputFormat = outputFormat;
@@ -61,26 +62,15 @@ public class JDBCAppendTableSink implements AppendStreamTableSink<Row>, BatchTab
 	}
 
 	@Override
-	public DataStreamSink<?> consumeDataStream(DataStream<Row> dataStream) {
+	public DataStreamSink emitDataStream(DataStream<Row> dataStream) {
 		return dataStream
-			.addSink(new JDBCSinkFunction(outputFormat))
-			.setParallelism(dataStream.getParallelism())
-			.name(TableConnectorUtils.generateRuntimeName(this.getClass(), fieldNames));
+				.addSink(new JDBCSinkFunction(outputFormat))
+				.name(TableConnectorUtil.generateRuntimeName(this.getClass(), fieldNames));
 	}
 
 	@Override
-	public void emitDataStream(DataStream<Row> dataStream) {
-		consumeDataStream(dataStream);
-	}
-
-	@Override
-	public void emitDataSet(DataSet<Row> dataSet) {
-		dataSet.output(outputFormat);
-	}
-
-	@Override
-	public TypeInformation<Row> getOutputType() {
-		return new RowTypeInfo(fieldTypes, fieldNames);
+	public DataType getOutputType() {
+		return DataTypes.createRowType(fieldTypes, fieldNames);
 	}
 
 	@Override
@@ -89,25 +79,26 @@ public class JDBCAppendTableSink implements AppendStreamTableSink<Row>, BatchTab
 	}
 
 	@Override
-	public TypeInformation<?>[] getFieldTypes() {
+	public DataType[] getFieldTypes() {
 		return fieldTypes;
 	}
 
 	@Override
-	public TableSink<Row> configure(String[] fieldNames, TypeInformation<?>[] fieldTypes) {
+	public TableSink<Row> configure(String[] fieldNames, DataType[] fieldTypes) {
 		int[] types = outputFormat.getTypesArray();
 
 		String sinkSchema =
 			String.join(", ", IntStream.of(types).mapToObj(JDBCTypeUtil::getTypeName).collect(Collectors.toList()));
 		String tableSchema =
-			String.join(", ", Stream.of(fieldTypes).map(JDBCTypeUtil::getTypeName).collect(Collectors.toList()));
+			String.join(", ", Stream.of(fieldTypes).map(DataType::toInternalType)
+					.map(JDBCTypeUtil::getTypeName).collect(Collectors.toList()));
 		String msg = String.format("Schema of output table is incompatible with JDBCAppendTableSink schema. " +
 			"Table schema: [%s], sink schema: [%s]", tableSchema, sinkSchema);
 
 		Preconditions.checkArgument(fieldTypes.length == types.length, msg);
 		for (int i = 0; i < types.length; ++i) {
 			Preconditions.checkArgument(
-				JDBCTypeUtil.typeInformationToSqlType(fieldTypes[i]) == types[i],
+				JDBCTypeUtil.typeInformationToSqlType(fieldTypes[i].toInternalType()) == types[i],
 				msg);
 		}
 
@@ -126,5 +117,13 @@ public class JDBCAppendTableSink implements AppendStreamTableSink<Row>, BatchTab
 	@VisibleForTesting
 	JDBCOutputFormat getOutputFormat() {
 		return outputFormat;
+	}
+
+	@Override
+	public DataStreamSink<?> emitBoundedStream(DataStream<Row> boundedStream,
+			TableConfig tableConfig, ExecutionConfig executionConfig) {
+		return boundedStream
+				.addSink(new JDBCSinkFunction(outputFormat))
+				.name(TableConnectorUtil.generateRuntimeName(this.getClass(), fieldNames));
 	}
 }

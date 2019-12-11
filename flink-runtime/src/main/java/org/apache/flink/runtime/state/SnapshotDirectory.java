@@ -25,7 +25,6 @@ import org.apache.flink.core.fs.Path;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
-import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -155,11 +154,11 @@ public abstract class SnapshotDirectory {
 	}
 
 	/**
-	 * Creates a local temporary snapshot directory for the given path. This will always return "null" as result of
+	 * Creates a temporary snapshot directory for the given path. This will always return "null" as result of
 	 * {@link #completeSnapshotAndGetHandle()} and always attempt to delete the underlying directory in
 	 * {@link #cleanup()}.
 	 */
-	public static SnapshotDirectory temporary(@Nonnull File directory) throws IOException {
+	public static SnapshotDirectory temporary(@Nonnull Path directory) throws IOException {
 		return new TemporarySnapshotDirectory(directory);
 	}
 
@@ -173,8 +172,8 @@ public abstract class SnapshotDirectory {
 
 	private static class TemporarySnapshotDirectory extends SnapshotDirectory {
 
-		TemporarySnapshotDirectory(@Nonnull File directory) throws IOException {
-			super(new Path(directory.toURI()), FileSystem.getLocalFileSystem());
+		TemporarySnapshotDirectory(@Nonnull Path directory) throws IOException {
+			super(directory);
 		}
 
 		@Override

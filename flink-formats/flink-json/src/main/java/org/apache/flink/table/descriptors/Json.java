@@ -93,11 +93,11 @@ public class Json extends FormatDescriptor {
 	}
 
 	/**
-	 * Derives the format schema from the table's schema described.
+	 * Derives the format schema from the table's schema described using {@link Schema}.
 	 *
 	 * <p>This allows for defining schema information only once.
 	 *
-	 * <p>The names, types, and fields' order of the format are determined by the table's
+	 * <p>The names, types, and field order of the format are determined by the table's
 	 * schema. Time attributes are ignored if their origin is not a field. A "from" definition
 	 * is interpreted as a field renaming in the format.
 	 */
@@ -108,8 +108,11 @@ public class Json extends FormatDescriptor {
 		return this;
 	}
 
+	/**
+	 * Convert this descriptor into a set of format properties.
+	 */
 	@Override
-	protected Map<String, String> toFormatProperties() {
+	public Map<String, String> toFormatProperties() {
 		final DescriptorProperties properties = new DescriptorProperties();
 
 		if (deriveSchema != null) {

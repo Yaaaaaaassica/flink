@@ -18,7 +18,6 @@
 
 package org.apache.flink.table.descriptors;
 
-import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumerBase;
 import org.apache.flink.streaming.connectors.kafka.config.StartupMode;
 import org.apache.flink.streaming.connectors.kafka.partitioner.FlinkKafkaPartitioner;
@@ -51,7 +50,6 @@ import static org.apache.flink.table.descriptors.KafkaValidator.CONNECTOR_TYPE_V
 /**
  * Connector descriptor for the Apache Kafka message queue.
  */
-@PublicEvolving
 public class Kafka extends ConnectorDescriptor {
 
 	private String version;
@@ -248,6 +246,9 @@ public class Kafka extends ConnectorDescriptor {
 		return this;
 	}
 
+	/**
+	 * Internal method for connector properties conversion.
+	 */
 	@Override
 	protected Map<String, String> toConnectorProperties() {
 		final DescriptorProperties properties = new DescriptorProperties();

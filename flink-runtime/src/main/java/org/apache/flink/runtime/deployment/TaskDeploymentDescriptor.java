@@ -146,6 +146,9 @@ public final class TaskDeploymentDescriptor implements Serializable {
 	@Nullable
 	private final JobManagerTaskRestore taskRestore;
 
+	/** The create timestamp of execution. */
+	private final long createTimestamp;
+
 	public TaskDeploymentDescriptor(
 		JobID jobId,
 		MaybeOffloaded<JobInformation> serializedJobInformation,
@@ -155,6 +158,7 @@ public final class TaskDeploymentDescriptor implements Serializable {
 		int subtaskIndex,
 		int attemptNumber,
 		int targetSlotNumber,
+		long createTimestamp,
 		@Nullable JobManagerTaskRestore taskRestore,
 		Collection<ResultPartitionDeploymentDescriptor> resultPartitionDeploymentDescriptors,
 		Collection<InputGateDeploymentDescriptor> inputGateDeploymentDescriptors) {
@@ -176,6 +180,9 @@ public final class TaskDeploymentDescriptor implements Serializable {
 		Preconditions.checkArgument(0 <= targetSlotNumber, "The target slot number must be positive.");
 		this.targetSlotNumber = targetSlotNumber;
 
+		Preconditions.checkArgument(0 <= createTimestamp, "The create timestamp must be positive.");
+		this.createTimestamp = createTimestamp;
+
 		this.taskRestore = taskRestore;
 
 		this.producedPartitions = Preconditions.checkNotNull(resultPartitionDeploymentDescriptors);
@@ -185,10 +192,10 @@ public final class TaskDeploymentDescriptor implements Serializable {
 	/**
 	 * Return the sub task's serialized job information.
 	 *
-	 * @return serialized job information (may throw {@link IllegalStateException} if {@link
-	 * #loadBigData(PermanentBlobService)} is not called beforehand).
-	 * @throws IllegalStateException If job information is offloaded to BLOB store.
+	 * @return serialized job information (may be <tt>null</tt> before a call to {@link
+	 * #loadBigData(PermanentBlobService)}).
 	 */
+	@Nullable
 	public SerializedValue<JobInformation> getSerializedJobInformation() {
 		if (serializedJobInformation instanceof NonOffloaded) {
 			NonOffloaded<JobInformation> jobInformation =
@@ -203,15 +210,15 @@ public final class TaskDeploymentDescriptor implements Serializable {
 	/**
 	 * Return the sub task's serialized task information.
 	 *
-	 * @return serialized task information (may throw {@link IllegalStateException} if {@link
-	 * #loadBigData(PermanentBlobService)} is not called beforehand)).
-	 * @throws IllegalStateException If job information is offloaded to BLOB store.
+	 * @return serialized task information (may be <tt>null</tt> before a call to {@link
+	 * #loadBigData(PermanentBlobService)}).
 	 */
+	@Nullable
 	public SerializedValue<TaskInformation> getSerializedTaskInformation() {
-		if (serializedTaskInformation instanceof NonOffloaded) {
-			NonOffloaded<TaskInformation> taskInformation =
+		if (serializedJobInformation instanceof NonOffloaded) {
+			NonOffloaded<TaskInformation> jobInformation =
 				(NonOffloaded<TaskInformation>) serializedTaskInformation;
-			return taskInformation.serializedValue;
+			return jobInformation.serializedValue;
 		} else {
 			throw new IllegalStateException(
 				"Trying to work with offloaded serialized job information.");
@@ -273,6 +280,10 @@ public final class TaskDeploymentDescriptor implements Serializable {
 		return allocationId;
 	}
 
+	public long getCreateTimestamp() {
+		return createTimestamp;
+	}
+
 	/**
 	 * Loads externalized data from the BLOB store back to the object.
 	 *
@@ -300,7 +311,7 @@ public final class TaskDeploymentDescriptor implements Serializable {
 			//       (it is deleted automatically on the BLOB server and cache when the job
 			//       enters a terminal state)
 			SerializedValue<JobInformation> serializedValue =
-				SerializedValue.fromBytes(FileUtils.readAllBytes(dataFile.toPath()));
+				SerializedValue.fromBytes(FileUtils.readAllBytes(dataFile.toPath(), -1));
 			serializedJobInformation = new NonOffloaded<>(serializedValue);
 		}
 
@@ -315,7 +326,7 @@ public final class TaskDeploymentDescriptor implements Serializable {
 			//       (it is deleted automatically on the BLOB server and cache when the job
 			//       enters a terminal state)
 			SerializedValue<TaskInformation> serializedValue =
-				SerializedValue.fromBytes(FileUtils.readAllBytes(dataFile.toPath()));
+				SerializedValue.fromBytes(FileUtils.readAllBytes(dataFile.toPath(), -1));
 			serializedTaskInformation = new NonOffloaded<>(serializedValue);
 		}
 

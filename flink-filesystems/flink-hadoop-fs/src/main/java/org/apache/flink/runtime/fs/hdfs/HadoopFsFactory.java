@@ -118,12 +118,7 @@ public class HadoopFsFactory implements FileSystemFactory {
 				initUri = fsUri;
 			}
 			else {
-				if (LOG.isDebugEnabled()) {
-					LOG.debug(
-						"URI {} does not specify file system authority, trying to load default authority (fs.defaultFS)",
-						fsUri
-					);
-				}
+				LOG.debug("URI {} does not specify file system authority, trying to load default authority (fs.defaultFS)");
 
 				String configEntry = hadoopConfig.get("fs.defaultFS", null);
 				if (configEntry == null) {
@@ -170,7 +165,7 @@ public class HadoopFsFactory implements FileSystemFactory {
 				throw new IOException(message, e);
 			}
 
-			HadoopFileSystem fs = new HadoopFileSystem(hadoopFs);
+			HadoopFileSystem fs = new HadoopFileSystem(hadoopConfig, hadoopFs);
 
 			// create the Flink file system, optionally limiting the open connections
 			if (flinkConfig != null) {

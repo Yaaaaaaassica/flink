@@ -20,25 +20,31 @@ package org.apache.flink.runtime.metrics;
 
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.time.Time;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.configuration.ConfigConstants;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Metric;
+import org.apache.flink.metrics.MetricConfig;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.metrics.View;
 import org.apache.flink.metrics.reporter.MetricReporter;
 import org.apache.flink.metrics.reporter.Scheduled;
+import org.apache.flink.runtime.akka.ActorUtils;
+import org.apache.flink.runtime.akka.AkkaUtils;
 import org.apache.flink.runtime.clusterframework.types.ResourceID;
 import org.apache.flink.runtime.concurrent.FutureUtils;
 import org.apache.flink.runtime.metrics.dump.MetricQueryService;
 import org.apache.flink.runtime.metrics.groups.AbstractMetricGroup;
 import org.apache.flink.runtime.metrics.groups.FrontMetricGroup;
 import org.apache.flink.runtime.metrics.scope.ScopeFormats;
-import org.apache.flink.runtime.rpc.RpcService;
 import org.apache.flink.runtime.util.ExecutorThreadFactory;
-import org.apache.flink.runtime.webmonitor.retriever.MetricQueryServiceGateway;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.ExecutorUtils;
 import org.apache.flink.util.FlinkException;
 import org.apache.flink.util.Preconditions;
 
+import akka.actor.ActorRef;
+import akka.actor.ActorSystem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,9 +52,7 @@ import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 import java.util.TimerTask;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
@@ -73,27 +77,20 @@ public class MetricRegistryImpl implements MetricRegistry {
 
 	private final CompletableFuture<Void> terminationFuture;
 
-	private final long maximumFramesize;
+	@Nullable
+	private ActorRef queryService;
 
 	@Nullable
-	private MetricQueryService queryService;
-
-	@Nullable
-	private RpcService metricQueryServiceRpcService;
+	private String metricQueryServicePath;
 
 	private ViewUpdater viewUpdater;
 
 	private boolean isShutdown;
 
-	public MetricRegistryImpl(MetricRegistryConfiguration config) {
-		this(config, Collections.emptyList());
-	}
-
 	/**
 	 * Creates a new MetricRegistry and starts the configured reporter.
 	 */
-	public MetricRegistryImpl(MetricRegistryConfiguration config, Collection<ReporterSetup> reporterConfigurations) {
-		this.maximumFramesize = config.getQueryServiceMessageSizeLimit();
+	public MetricRegistryImpl(MetricRegistryConfiguration config) {
 		this.scopeFormats = config.getScopeFormats();
 		this.globalDelimiter = config.getDelimiter();
 		this.delimiters = new ArrayList<>(10);
@@ -103,27 +100,37 @@ public class MetricRegistryImpl implements MetricRegistry {
 		// second, instantiate any custom configured reporters
 		this.reporters = new ArrayList<>(4);
 
+		List<Tuple2<String, Configuration>> reporterConfigurations = config.getReporterConfigurations();
+
 		this.executor = Executors.newSingleThreadScheduledExecutor(new ExecutorThreadFactory("Flink-MetricRegistry"));
 
 		this.queryService = null;
-		this.metricQueryServiceRpcService = null;
+		this.metricQueryServicePath = null;
 
 		if (reporterConfigurations.isEmpty()) {
 			// no reporters defined
 			// by default, don't report anything
 			LOG.info("No metrics reporter configured, no metrics will be exposed/reported.");
 		} else {
-			for (ReporterSetup reporterSetup : reporterConfigurations) {
-				final String namedReporter = reporterSetup.getName();
+			// we have some reporters so
+			for (Tuple2<String, Configuration> reporterConfiguration: reporterConfigurations) {
+				String namedReporter = reporterConfiguration.f0;
+				Configuration reporterConfig = reporterConfiguration.f1;
+
+				final String className = reporterConfig.getString(ConfigConstants.METRICS_REPORTER_CLASS_SUFFIX, null);
+				if (className == null) {
+					LOG.error("No reporter class set for reporter " + namedReporter + ". Metrics might not be exposed/reported.");
+					continue;
+				}
 
 				try {
-					Optional<String> configuredPeriod = reporterSetup.getIntervalSettings();
+					String configuredPeriod = reporterConfig.getString(ConfigConstants.METRICS_REPORTER_INTERVAL_SUFFIX, null);
 					TimeUnit timeunit = TimeUnit.SECONDS;
 					long period = 10;
 
-					if (configuredPeriod.isPresent()) {
+					if (configuredPeriod != null) {
 						try {
-							String[] interval = configuredPeriod.get().split(" ");
+							String[] interval = configuredPeriod.split(" ");
 							period = Long.parseLong(interval[0]);
 							timeunit = TimeUnit.valueOf(interval[1]);
 						}
@@ -134,8 +141,13 @@ public class MetricRegistryImpl implements MetricRegistry {
 						}
 					}
 
-					final MetricReporter reporterInstance = reporterSetup.getReporter();
-					final String className = reporterInstance.getClass().getName();
+					Class<?> reporterClass = Class.forName(className);
+					MetricReporter reporterInstance = (MetricReporter) reporterClass.newInstance();
+
+					MetricConfig metricConfig = new MetricConfig();
+					reporterConfig.addAllToProperties(metricConfig);
+					LOG.info("Configuring {} with {}.", namedReporter, metricConfig);
+					reporterInstance.open(metricConfig);
 
 					if (reporterInstance instanceof Scheduled) {
 						LOG.info("Periodically reporting metrics in intervals of {} {} for reporter {} of type {}.", period, timeunit.name(), namedReporter, className);
@@ -147,7 +159,7 @@ public class MetricRegistryImpl implements MetricRegistry {
 					}
 					reporters.add(reporterInstance);
 
-					String delimiterForReporter = reporterSetup.getDelimiter().orElse(String.valueOf(globalDelimiter));
+					String delimiterForReporter = reporterConfig.getString(ConfigConstants.METRICS_REPORTER_SCOPE_DELIMITER, String.valueOf(globalDelimiter));
 					if (delimiterForReporter.length() != 1) {
 						LOG.warn("Failed to parse delimiter '{}' for reporter '{}', using global delimiter '{}'.", delimiterForReporter, namedReporter, globalDelimiter);
 						delimiterForReporter = String.valueOf(globalDelimiter);
@@ -164,31 +176,20 @@ public class MetricRegistryImpl implements MetricRegistry {
 	/**
 	 * Initializes the MetricQueryService.
 	 *
-	 * @param rpcService RpcService to create the MetricQueryService on
+	 * @param actorSystem ActorSystem to create the MetricQueryService on
 	 * @param resourceID resource ID used to disambiguate the actor name
      */
-	public void startQueryService(RpcService rpcService, ResourceID resourceID) {
+	public void startQueryService(ActorSystem actorSystem, ResourceID resourceID) {
 		synchronized (lock) {
 			Preconditions.checkState(!isShutdown(), "The metric registry has already been shut down.");
 
 			try {
-				metricQueryServiceRpcService = rpcService;
-				queryService = MetricQueryService.createMetricQueryService(rpcService, resourceID, maximumFramesize);
-				queryService.start();
+				queryService = MetricQueryService.startMetricQueryService(actorSystem, resourceID);
+				metricQueryServicePath = AkkaUtils.getAkkaURL(actorSystem, queryService);
 			} catch (Exception e) {
 				LOG.warn("Could not start MetricDumpActor. No metrics will be submitted to the WebInterface.", e);
 			}
 		}
-	}
-
-	/**
-	 * Returns the rpc service that the {@link MetricQueryService} runs in.
-	 *
-	 * @return rpc service of hte MetricQueryService
-	 */
-	@Nullable
-	public RpcService getMetricQueryServiceRpcService() {
-		return metricQueryServiceRpcService;
 	}
 
 	/**
@@ -198,22 +199,8 @@ public class MetricRegistryImpl implements MetricRegistry {
 	 */
 	@Override
 	@Nullable
-	public String getMetricQueryServiceGatewayRpcAddress() {
-		if (queryService != null) {
-			return queryService.getSelfGateway(MetricQueryServiceGateway.class).getAddress();
-		} else {
-			return null;
-		}
-	}
-
-	@VisibleForTesting
-	@Nullable
-	MetricQueryServiceGateway getMetricQueryServiceGateway() {
-		if (queryService != null) {
-			return queryService.getSelfGateway(MetricQueryServiceGateway.class);
-		} else {
-			return null;
-		}
+	public String getMetricQueryServicePath() {
+		return metricQueryServicePath;
 	}
 
 	@Override
@@ -270,9 +257,13 @@ public class MetricRegistryImpl implements MetricRegistry {
 				final Collection<CompletableFuture<Void>> terminationFutures = new ArrayList<>(3);
 				final Time gracePeriod = Time.seconds(1L);
 
-				if (metricQueryServiceRpcService != null) {
-					final CompletableFuture<Void> metricQueryServiceRpcServiceTerminationFuture = metricQueryServiceRpcService.stopService();
-					terminationFutures.add(metricQueryServiceRpcServiceTerminationFuture);
+				if (queryService != null) {
+					final CompletableFuture<Void> queryServiceTerminationFuture = ActorUtils.nonBlockingShutDown(
+						gracePeriod.toMilliseconds(),
+						TimeUnit.MILLISECONDS,
+						queryService);
+
+					terminationFutures.add(queryServiceTerminationFuture);
 				}
 
 				Throwable throwable = null;
@@ -338,16 +329,16 @@ public class MetricRegistryImpl implements MetricRegistry {
 								reporter.notifyOfAddedMetric(metric, metricName, front);
 							}
 						} catch (Exception e) {
-							LOG.warn("Error while registering metric: {}.", metricName, e);
+							LOG.warn("Error while registering metric.", e);
 						}
 					}
 				}
 				try {
 					if (queryService != null) {
-						queryService.addMetric(metricName, metric, group);
+						MetricQueryService.notifyOfAddedMetric(queryService, metric, metricName, group);
 					}
 				} catch (Exception e) {
-					LOG.warn("Error while registering metric: {}.", metricName, e);
+					LOG.warn("Error while registering metric.", e);
 				}
 				try {
 					if (metric instanceof View) {
@@ -357,7 +348,7 @@ public class MetricRegistryImpl implements MetricRegistry {
 						viewUpdater.notifyOfAddedView((View) metric);
 					}
 				} catch (Exception e) {
-					LOG.warn("Error while registering metric: {}.", metricName, e);
+					LOG.warn("Error while registering metric.", e);
 				}
 			}
 		}
@@ -378,16 +369,16 @@ public class MetricRegistryImpl implements MetricRegistry {
 								reporter.notifyOfRemovedMetric(metric, metricName, front);
 							}
 						} catch (Exception e) {
-							LOG.warn("Error while unregistering metric: {}.", metricName, e);
+							LOG.warn("Error while registering metric.", e);
 						}
 					}
 				}
 				try {
 					if (queryService != null) {
-						queryService.removeMetric(metric);
+						MetricQueryService.notifyOfRemovedMetric(queryService, metric);
 					}
 				} catch (Exception e) {
-					LOG.warn("Error while unregistering metric: {}.", metricName, e);
+					LOG.warn("Error while registering metric.", e);
 				}
 				try {
 					if (metric instanceof View) {
@@ -396,7 +387,7 @@ public class MetricRegistryImpl implements MetricRegistry {
 						}
 					}
 				} catch (Exception e) {
-					LOG.warn("Error while unregistering metric: {}", metricName, e);
+					LOG.warn("Error while registering metric.", e);
 				}
 			}
 		}
@@ -406,7 +397,7 @@ public class MetricRegistryImpl implements MetricRegistry {
 
 	@VisibleForTesting
 	@Nullable
-	MetricQueryService getQueryService() {
+	public ActorRef getQueryService() {
 		return queryService;
 	}
 

@@ -21,41 +21,33 @@ package org.apache.flink.runtime.concurrent;
 import org.apache.flink.api.common.time.Deadline;
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.runtime.util.ExecutorThreadFactory;
-import org.apache.flink.runtime.util.FatalExitExceptionHandler;
 import org.apache.flink.util.ExceptionUtils;
+import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.function.RunnableWithException;
 import org.apache.flink.util.function.SupplierWithException;
 
 import akka.dispatch.OnComplete;
 
-import javax.annotation.Nonnull;
-
-import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.RunnableFuture;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
-import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 import scala.concurrent.Future;
+import scala.concurrent.duration.FiniteDuration;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
@@ -64,20 +56,10 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  */
 public class FutureUtils {
 
-	private static final CompletableFuture<Void> COMPLETED_VOID_FUTURE = CompletableFuture.completedFuture(null);
-
-	/**
-	 * Returns a completed future of type {@link Void}.
-	 *
-	 * @return a completed future of type {@link Void}
-	 */
-	public static CompletableFuture<Void> completedVoidFuture() {
-		return COMPLETED_VOID_FUTURE;
-	}
-
 	// ------------------------------------------------------------------------
 	//  retrying operations
 	// ------------------------------------------------------------------------
+
 
 	/**
 	 * Retry the given operation the given number of times in case of a failure.
@@ -200,61 +182,6 @@ public class FutureUtils {
 			scheduledExecutor);
 	}
 
-	/**
-	 * Schedule the operation with the given delay.
-	 *
-	 * @param operation to schedule
-	 * @param delay delay to schedule
-	 * @param scheduledExecutor executor to be used for the operation
-	 * @return Future which schedules the given operation with given delay.
-	 */
-	public static CompletableFuture<Void> scheduleWithDelay(
-			final Runnable operation,
-			final Time delay,
-			final ScheduledExecutor scheduledExecutor) {
-		Supplier<Void> operationSupplier = () -> {
-			operation.run();
-			return null;
-		};
-		return scheduleWithDelay(operationSupplier, delay, scheduledExecutor);
-	}
-
-	/**
-	 * Schedule the operation with the given delay.
-	 *
-	 * @param operation to schedule
-	 * @param delay delay to schedule
-	 * @param scheduledExecutor executor to be used for the operation
-	 * @param <T> type of the result
-	 * @return Future which schedules the given operation with given delay.
-	 */
-	public static <T> CompletableFuture<T> scheduleWithDelay(
-			final Supplier<T> operation,
-			final Time delay,
-			final ScheduledExecutor scheduledExecutor) {
-		final CompletableFuture<T> resultFuture = new CompletableFuture<>();
-
-		ScheduledFuture<?> scheduledFuture = scheduledExecutor.schedule(
-			() -> {
-				try {
-					resultFuture.complete(operation.get());
-				} catch (Throwable t) {
-					resultFuture.completeExceptionally(t);
-				}
-			},
-			delay.getSize(),
-			delay.getUnit()
-		);
-
-		resultFuture.whenComplete(
-			(t, throwable) -> {
-				if (!scheduledFuture.isDone()) {
-					scheduledFuture.cancel(false);
-				}
-			});
-		return resultFuture;
-	}
-
 	private static <T> void retryOperationWithDelay(
 			final CompletableFuture<T> resultFuture,
 			final Supplier<CompletableFuture<T>> operation,
@@ -272,22 +199,21 @@ public class FutureUtils {
 						if (throwable instanceof CancellationException) {
 							resultFuture.completeExceptionally(new RetryException("Operation future was cancelled.", throwable));
 						} else {
-							throwable = ExceptionUtils.stripExecutionException(throwable);
-							if (!retryPredicate.test(throwable)) {
-								resultFuture.completeExceptionally(throwable);
-							} else if (retries > 0) {
+							if (retries > 0 && retryPredicate.test(throwable)) {
 								final ScheduledFuture<?> scheduledFuture = scheduledExecutor.schedule(
-									(Runnable) () -> retryOperationWithDelay(resultFuture, operation, retries - 1, retryDelay, retryPredicate, scheduledExecutor),
+									() -> retryOperationWithDelay(resultFuture, operation, retries - 1, retryDelay, retryPredicate, scheduledExecutor),
 									retryDelay.toMilliseconds(),
 									TimeUnit.MILLISECONDS);
 
 								resultFuture.whenComplete(
 									(innerT, innerThrowable) -> scheduledFuture.cancel(false));
 							} else {
-								RetryException retryException = new RetryException(
-									"Could not complete the operation. Number of retries has been exhausted.",
-									throwable);
-								resultFuture.completeExceptionally(retryException);
+								final String errorMsg = retries == 0 ?
+									"Number of retries has been exhausted." :
+									"Exception is not retryable.";
+								resultFuture.completeExceptionally(new RetryException(
+									"Could not complete the operation. " + errorMsg,
+									throwable));
 							}
 						}
 					} else {
@@ -313,7 +239,7 @@ public class FutureUtils {
 	 * @return Future which retries the given operation a given amount of times and delays the retry
 	 *   in case the predicate isn't matched
 	 */
-	public static <T> CompletableFuture<T> retrySuccessfulWithDelay(
+	public static <T> CompletableFuture<T> retrySuccesfulWithDelay(
 		final Supplier<CompletableFuture<T>> operation,
 		final Time retryDelay,
 		final Deadline deadline,
@@ -357,7 +283,7 @@ public class FutureUtils {
 							resultFuture.complete(t);
 						} else if (deadline.hasTimeLeft()) {
 							final ScheduledFuture<?> scheduledFuture = scheduledExecutor.schedule(
-								(Runnable) () -> retrySuccessfulOperationWithDelay(resultFuture, operation, retryDelay, deadline, acceptancePredicate, scheduledExecutor),
+								() -> retrySuccessfulOperationWithDelay(resultFuture, operation, retryDelay, deadline, acceptancePredicate, scheduledExecutor),
 								retryDelay.toMilliseconds(),
 								TimeUnit.MILLISECONDS);
 
@@ -406,28 +332,8 @@ public class FutureUtils {
 	 * @return The timeout enriched future
 	 */
 	public static <T> CompletableFuture<T> orTimeout(CompletableFuture<T> future, long timeout, TimeUnit timeUnit) {
-		return orTimeout(future, timeout, timeUnit, Executors.directExecutor());
-	}
-
-	/**
-	 * Times the given future out after the timeout.
-	 *
-	 * @param future to time out
-	 * @param timeout after which the given future is timed out
-	 * @param timeUnit time unit of the timeout
-	 * @param timeoutFailExecutor executor that will complete the future exceptionally after the timeout is reached
-	 * @param <T> type of the given future
-	 * @return The timeout enriched future
-	 */
-	public static <T> CompletableFuture<T> orTimeout(
-		CompletableFuture<T> future,
-		long timeout,
-		TimeUnit timeUnit,
-		Executor timeoutFailExecutor) {
-
 		if (!future.isDone()) {
-			final ScheduledFuture<?> timeoutFuture = Delayer.delay(
-				() -> timeoutFailExecutor.execute(new Timeout(future)), timeout, timeUnit);
+			final ScheduledFuture<?> timeoutFuture = Delayer.delay(new Timeout(future), timeout, timeUnit);
 
 			future.whenComplete((T value, Throwable throwable) -> {
 				if (!timeoutFuture.isDone()) {
@@ -442,27 +348,6 @@ public class FutureUtils {
 	// ------------------------------------------------------------------------
 	//  Future actions
 	// ------------------------------------------------------------------------
-
-	/**
-	 * Run the given {@code RunnableFuture} if it is not done, and then retrieves its result.
-	 * @param future to run if not done and get
-	 * @param <T> type of the result
-	 * @return the result after running the future
-	 * @throws ExecutionException if a problem occurred
-	 * @throws InterruptedException if the current thread has been interrupted
-	 */
-	public static <T> T runIfNotDoneAndGet(RunnableFuture<T> future) throws ExecutionException, InterruptedException {
-
-		if (null == future) {
-			return null;
-		}
-
-		if (!future.isDone()) {
-			future.run();
-		}
-
-		return future.get();
-	}
 
 	/**
 	 * Run the given action after the completion of the given future. The given future can be
@@ -623,6 +508,22 @@ public class FutureUtils {
 		 * @return The number of Futures in the conjunction that are already complete
 		 */
 		public abstract int getNumFuturesCompleted();
+
+		/**
+		 * Gets the individual futures which make up the {@link ConjunctFuture}.
+		 *
+		 * @return Collection of futures which make up the {@link ConjunctFuture}
+		 */
+		protected abstract Collection<? extends CompletableFuture<?>> getConjunctFutures();
+
+		@Override
+		public boolean cancel(boolean mayInterruptIfRunning) {
+			for (CompletableFuture<?> completableFuture : getConjunctFutures()) {
+				completableFuture.cancel(mayInterruptIfRunning);
+			}
+
+			return super.cancel(mayInterruptIfRunning);
+		}
 	}
 
 	/**
@@ -630,8 +531,13 @@ public class FutureUtils {
 	 */
 	private static class ResultConjunctFuture<T> extends ConjunctFuture<Collection<T>> {
 
+		private final Collection<? extends CompletableFuture<? extends T>> resultFutures;
+
 		/** The total number of futures in the conjunction. */
 		private final int numTotal;
+
+		/** The next free index in the results arrays. */
+		private final AtomicInteger nextIndex = new AtomicInteger(0);
 
 		/** The number of futures in the conjunction that are already complete. */
 		private final AtomicInteger numCompleted = new AtomicInteger(0);
@@ -642,10 +548,12 @@ public class FutureUtils {
 		/** The function that is attached to all futures in the conjunction. Once a future
 		 * is complete, this function tracks the completion or fails the conjunct.
 		 */
-		private void handleCompletedFuture(int index, T value, Throwable throwable) {
+		private void handleCompletedFuture(T value, Throwable throwable) {
 			if (throwable != null) {
 				completeExceptionally(throwable);
 			} else {
+				int index = nextIndex.getAndIncrement();
+
 				results[index] = value;
 
 				if (numCompleted.incrementAndGet() == numTotal) {
@@ -656,6 +564,7 @@ public class FutureUtils {
 
 		@SuppressWarnings("unchecked")
 		ResultConjunctFuture(Collection<? extends CompletableFuture<? extends T>> resultFutures) {
+			this.resultFutures = checkNotNull(resultFutures);
 			this.numTotal = resultFutures.size();
 			results = (T[]) new Object[numTotal];
 
@@ -663,11 +572,8 @@ public class FutureUtils {
 				complete(Collections.emptyList());
 			}
 			else {
-				int counter = 0;
 				for (CompletableFuture<? extends T> future : resultFutures) {
-					final int index = counter;
-					counter++;
-					future.whenComplete((value, throwable) -> handleCompletedFuture(index, value, throwable));
+					future.whenComplete(this::handleCompletedFuture);
 				}
 			}
 		}
@@ -681,6 +587,11 @@ public class FutureUtils {
 		public int getNumFuturesCompleted() {
 			return numCompleted.get();
 		}
+
+		@Override
+		protected Collection<? extends CompletableFuture<?>> getConjunctFutures() {
+			return resultFutures;
+		}
 	}
 
 	/**
@@ -688,6 +599,8 @@ public class FutureUtils {
 	 * of its futures and does not return their values.
 	 */
 	private static final class WaitingConjunctFuture extends ConjunctFuture<Void> {
+
+		private final Collection<? extends CompletableFuture<?>> futures;
 
 		/** Number of completed futures. */
 		private final AtomicInteger numCompleted = new AtomicInteger(0);
@@ -707,6 +620,7 @@ public class FutureUtils {
 		}
 
 		private WaitingConjunctFuture(Collection<? extends CompletableFuture<?>> futures) {
+			this.futures = checkNotNull(futures);
 			this.numTotal = futures.size();
 
 			if (futures.isEmpty()) {
@@ -726,6 +640,11 @@ public class FutureUtils {
 		@Override
 		public int getNumFuturesCompleted() {
 			return numCompleted.get();
+		}
+
+		@Override
+		protected Collection<? extends CompletableFuture<?>> getConjunctFutures() {
+			return futures;
 		}
 	}
 
@@ -754,11 +673,14 @@ public class FutureUtils {
 
 		private final int numFuturesTotal;
 
+		private final Collection<? extends CompletableFuture<?>> futuresToComplete;
+
 		private int futuresCompleted;
 
 		private Throwable globalThrowable;
 
 		private CompletionConjunctFuture(Collection<? extends CompletableFuture<?>> futuresToComplete) {
+			this.futuresToComplete = checkNotNull(futuresToComplete);
 			numFuturesTotal = futuresToComplete.size();
 
 			futuresCompleted = 0;
@@ -803,6 +725,11 @@ public class FutureUtils {
 				return futuresCompleted;
 			}
 		}
+
+		@Override
+		protected Collection<? extends CompletableFuture<?>> getConjunctFutures() {
+			return futuresToComplete;
+		}
 	}
 
 	// ------------------------------------------------------------------------
@@ -844,13 +771,23 @@ public class FutureUtils {
 	}
 
 	/**
-	 * Converts Flink time into a {@link Duration}.
+	 * Converts Flink time into a {@link FiniteDuration}.
 	 *
-	 * @param time to convert into a Duration
-	 * @return Duration with the length of the given time
+	 * @param time to convert into a FiniteDuration
+	 * @return FiniteDuration with the length of the given time
 	 */
-	public static Duration toDuration(Time time) {
-		return Duration.ofMillis(time.toMilliseconds());
+	public static FiniteDuration toFiniteDuration(Time time) {
+		return new FiniteDuration(time.toMilliseconds(), TimeUnit.MILLISECONDS);
+	}
+
+	/**
+	 * Converts {@link FiniteDuration} into Flink time.
+	 *
+	 * @param finiteDuration to convert into Flink time
+	 * @return Flink time with the length of the given finite duration
+	 */
+	public static Time toTime(FiniteDuration finiteDuration) {
+		return Time.milliseconds(finiteDuration.toMillis());
 	}
 
 	// ------------------------------------------------------------------------
@@ -862,15 +799,14 @@ public class FutureUtils {
 	 *
 	 * @param scalaFuture to convert to a Java 8 CompletableFuture
 	 * @param <T> type of the future value
-	 * @param <U> type of the original future
 	 * @return Java 8 CompletableFuture
 	 */
-	public static <T, U extends T> CompletableFuture<T> toJava(Future<U> scalaFuture) {
+	public static <T> CompletableFuture<T> toJava(Future<T> scalaFuture) {
 		final CompletableFuture<T> result = new CompletableFuture<>();
 
-		scalaFuture.onComplete(new OnComplete<U>() {
+		scalaFuture.onComplete(new OnComplete<T>() {
 			@Override
-			public void onComplete(Throwable failure, U success) {
+			public void onComplete(Throwable failure, T success) {
 				if (failure != null) {
 					result.completeExceptionally(failure);
 				} else {
@@ -883,110 +819,6 @@ public class FutureUtils {
 	}
 
 	/**
-	 * This function takes a {@link CompletableFuture} and a function to apply to this future. If the input future
-	 * is already done, this function returns {@link CompletableFuture#thenApply(Function)}. Otherwise, the return
-	 * value is {@link CompletableFuture#thenApplyAsync(Function, Executor)} with the given executor.
-	 *
-	 * @param completableFuture the completable future for which we want to apply.
-	 * @param executor the executor to run the apply function if the future is not yet done.
-	 * @param applyFun the function to apply.
-	 * @param <IN> type of the input future.
-	 * @param <OUT> type of the output future.
-	 * @return a completable future that is applying the given function to the input future.
-	 */
-	public static <IN, OUT> CompletableFuture<OUT> thenApplyAsyncIfNotDone(
-		CompletableFuture<IN> completableFuture,
-		Executor executor,
-		Function<? super IN, ? extends OUT> applyFun) {
-		return completableFuture.isDone() ?
-			completableFuture.thenApply(applyFun) :
-			completableFuture.thenApplyAsync(applyFun, executor);
-	}
-
-	/**
-	 * This function takes a {@link CompletableFuture} and a function to compose with this future. If the input future
-	 * is already done, this function returns {@link CompletableFuture#thenCompose(Function)}. Otherwise, the return
-	 * value is {@link CompletableFuture#thenComposeAsync(Function, Executor)} with the given executor.
-	 *
-	 * @param completableFuture the completable future for which we want to compose.
-	 * @param executor the executor to run the compose function if the future is not yet done.
-	 * @param composeFun the function to compose.
-	 * @param <IN> type of the input future.
-	 * @param <OUT> type of the output future.
-	 * @return a completable future that is a composition of the input future and the function.
-	 */
-	public static <IN, OUT> CompletableFuture<OUT> thenComposeAsyncIfNotDone(
-		CompletableFuture<IN> completableFuture,
-		Executor executor,
-		Function<? super IN, ? extends CompletionStage<OUT>> composeFun) {
-		return completableFuture.isDone() ?
-			completableFuture.thenCompose(composeFun) :
-			completableFuture.thenComposeAsync(composeFun, executor);
-	}
-
-	/**
-	 * This function takes a {@link CompletableFuture} and a bi-consumer to call on completion of this future. If the
-	 * input future is already done, this function returns {@link CompletableFuture#whenComplete(BiConsumer)}.
-	 * Otherwise, the return value is {@link CompletableFuture#whenCompleteAsync(BiConsumer, Executor)} with the given
-	 * executor.
-	 *
-	 * @param completableFuture the completable future for which we want to call #whenComplete.
-	 * @param executor the executor to run the whenComplete function if the future is not yet done.
-	 * @param whenCompleteFun the bi-consumer function to call when the future is completed.
-	 * @param <IN> type of the input future.
-	 * @return the new completion stage.
-	 */
-	public static <IN> CompletableFuture<IN> whenCompleteAsyncIfNotDone(
-		CompletableFuture<IN> completableFuture,
-		Executor executor,
-		BiConsumer<? super IN, ? super Throwable> whenCompleteFun) {
-		return completableFuture.isDone() ?
-			completableFuture.whenComplete(whenCompleteFun) :
-			completableFuture.whenCompleteAsync(whenCompleteFun, executor);
-	}
-
-	/**
-	 * This function takes a {@link CompletableFuture} and a consumer to accept the result of this future. If the input
-	 * future is already done, this function returns {@link CompletableFuture#thenAccept(Consumer)}. Otherwise, the
-	 * return value is {@link CompletableFuture#thenAcceptAsync(Consumer, Executor)} with the given executor.
-	 *
-	 * @param completableFuture the completable future for which we want to call #thenAccept.
-	 * @param executor the executor to run the thenAccept function if the future is not yet done.
-	 * @param consumer the consumer function to call when the future is completed.
-	 * @param <IN> type of the input future.
-	 * @return the new completion stage.
-	 */
-	public static <IN> CompletableFuture<Void> thenAcceptAsyncIfNotDone(
-		CompletableFuture<IN> completableFuture,
-		Executor executor,
-		Consumer<? super IN> consumer) {
-		return completableFuture.isDone() ?
-			completableFuture.thenAccept(consumer) :
-			completableFuture.thenAcceptAsync(consumer, executor);
-	}
-
-	/**
-	 * This function takes a {@link CompletableFuture} and a handler function for the result of this future. If the
-	 * input future is already done, this function returns {@link CompletableFuture#handle(BiFunction)}. Otherwise,
-	 * the return value is {@link CompletableFuture#handleAsync(BiFunction, Executor)} with the given executor.
-	 *
-	 * @param completableFuture the completable future for which we want to call #handle.
-	 * @param executor the executor to run the handle function if the future is not yet done.
-	 * @param handler the handler function to call when the future is completed.
-	 * @param <IN> type of the handler input argument.
-	 * @param <OUT> type of the handler return value.
-	 * @return the new completion stage.
-	 */
-	public static <IN, OUT> CompletableFuture<OUT> handleAsyncIfNotDone(
-		CompletableFuture<IN> completableFuture,
-		Executor executor,
-		BiFunction<? super IN, Throwable, ? extends OUT> handler) {
-		return completableFuture.isDone() ?
-			completableFuture.handle(handler) :
-			completableFuture.handleAsync(handler, executor);
-	}
-
-	/**
 	 * Runnable to complete the given future with a {@link TimeoutException}.
 	 */
 	private static final class Timeout implements Runnable {
@@ -994,7 +826,7 @@ public class FutureUtils {
 		private final CompletableFuture<?> future;
 
 		private Timeout(CompletableFuture<?> future) {
-			this.future = checkNotNull(future);
+			this.future = Preconditions.checkNotNull(future);
 		}
 
 		@Override
@@ -1008,9 +840,8 @@ public class FutureUtils {
 	 *
 	 * <p>This class creates a singleton scheduler used to run the provided actions.
 	 */
-	private enum Delayer {
-		;
-		static final ScheduledThreadPoolExecutor DELAYER = new ScheduledThreadPoolExecutor(
+	private static final class Delayer {
+		static final ScheduledThreadPoolExecutor delayer = new ScheduledThreadPoolExecutor(
 			1,
 			new ExecutorThreadFactory("FlinkCompletableFutureDelayScheduler"));
 
@@ -1023,75 +854,10 @@ public class FutureUtils {
 		 * @return Future of the scheduled action
 		 */
 		private static ScheduledFuture<?> delay(Runnable runnable, long delay, TimeUnit timeUnit) {
-			checkNotNull(runnable);
-			checkNotNull(timeUnit);
+			Preconditions.checkNotNull(runnable);
+			Preconditions.checkNotNull(timeUnit);
 
-			return DELAYER.schedule(runnable, delay, timeUnit);
+			return delayer.schedule(runnable, delay, timeUnit);
 		}
-	}
-
-	/**
-	 * Asserts that the given {@link CompletableFuture} is not completed exceptionally. If the future
-	 * is completed exceptionally, then it will call the {@link FatalExitExceptionHandler}.
-	 *
-	 * @param completableFuture to assert for no exceptions
-	 */
-	public static void assertNoException(CompletableFuture<?> completableFuture) {
-		handleUncaughtException(completableFuture, FatalExitExceptionHandler.INSTANCE);
-	}
-
-	/**
-	 * Checks that the given {@link CompletableFuture} is not completed exceptionally. If the future
-	 * is completed exceptionally, then it will call the given uncaught exception handler.
-	 *
-	 * @param completableFuture to assert for no exceptions
-	 * @param uncaughtExceptionHandler to call if the future is completed exceptionally
-	 */
-	public static void handleUncaughtException(CompletableFuture<?> completableFuture, Thread.UncaughtExceptionHandler uncaughtExceptionHandler) {
-		checkNotNull(completableFuture).whenComplete((ignored, throwable) -> {
-			if (throwable != null) {
-				uncaughtExceptionHandler.uncaughtException(Thread.currentThread(), throwable);
-			}
-		});
-	}
-
-	/**
-	 * Cancels all instances of {@link java.util.concurrent.Future} in the given list of runnables without interrupting.
-	 * This method will suppress unexpected exceptions until the whole list is processed and then rethrow.
-	 *
-	 * @param runnables list of {@link Runnable} candidates to cancel.
-	 */
-	public static void cancelRunnableFutures(@Nonnull List<Runnable> runnables) {
-		RuntimeException suppressedExceptions = null;
-		for (Runnable runnable : runnables) {
-			if (runnable instanceof java.util.concurrent.Future) {
-				try {
-					((java.util.concurrent.Future<?>) runnable).cancel(false);
-				} catch (RuntimeException ex) {
-					// safety net to ensure all candidates get cancelled before we let the exception bubble up.
-					suppressedExceptions = ExceptionUtils.firstOrSuppressed(ex, suppressedExceptions);
-				}
-			}
-		}
-		if (suppressedExceptions != null) {
-			throw suppressedExceptions;
-		}
-	}
-
-	/**
-	 * Forwards the value from the source future to the target future.
-	 *
-	 * @param source future to forward the value from
-	 * @param target future to forward the value to
-	 * @param <T> type of the value
-	 */
-	public static <T> void forward(CompletableFuture<T> source, CompletableFuture<T> target) {
-		source.whenComplete((value, throwable) -> {
-			if (throwable != null) {
-				target.completeExceptionally(throwable);
-			} else {
-				target.complete(value);
-			}
-		});
 	}
 }

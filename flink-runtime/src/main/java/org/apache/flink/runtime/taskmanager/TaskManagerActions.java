@@ -19,12 +19,18 @@
 package org.apache.flink.runtime.taskmanager;
 
 import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
-import org.apache.flink.runtime.taskexecutor.TaskExecutor;
 
 /**
- * Interface for the communication of the {@link Task} with the {@link TaskExecutor}.
+ * Interface for the communication of the {@link Task} with the {@link TaskManager}.
  */
 public interface TaskManagerActions {
+
+	/**
+	 * Notifies the task manager that the given task is in a final state.
+	 *
+	 * @param executionAttemptID Execution attempt ID of the task
+	 */
+	void notifyFinalState(ExecutionAttemptID executionAttemptID);
 
 	/**
 	 * Notifies the task manager about a fatal error occurred in the task.

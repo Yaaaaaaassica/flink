@@ -24,7 +24,6 @@ import org.apache.flink.api.common.typeutils.TypeComparator;
 import org.apache.flink.api.common.typeutils.TypeComparatorFactory;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.common.typeutils.TypeSerializerFactory;
-import org.apache.flink.core.io.IOReadableWritable;
 import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.execution.Environment;
@@ -32,7 +31,6 @@ import org.apache.flink.runtime.io.disk.InputViewIterator;
 import org.apache.flink.runtime.io.network.TaskEventDispatcher;
 import org.apache.flink.runtime.io.network.api.EndOfSuperstepEvent;
 import org.apache.flink.runtime.io.network.api.writer.RecordWriter;
-import org.apache.flink.runtime.io.network.api.writer.RecordWriterBuilder;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionID;
 import org.apache.flink.runtime.iterative.concurrent.BlockingBackChannel;
 import org.apache.flink.runtime.iterative.concurrent.BlockingBackChannelBroker;
@@ -95,7 +93,7 @@ public class IterationHeadTask<X, Y, S extends Function, OT> extends AbstractIte
 
 	private TypeSerializerFactory<X> solutionTypeSerializer;
 
-	private RecordWriter<IOReadableWritable> toSync;
+	private RecordWriter toSync;
 
 	private ResultPartitionID toSyncPartitionId;
 
@@ -143,7 +141,7 @@ public class IterationHeadTask<X, Y, S extends Function, OT> extends AbstractIte
 			throw new Exception("Error: Inconsistent head task setup - wrong mapping of output gates.");
 		}
 		// now, we can instantiate the sync gate
-		this.toSync = new RecordWriterBuilder<>().build(getEnvironment().getWriter(syncGateIndex));
+		this.toSync = new RecordWriter<>(getEnvironment().getWriter(syncGateIndex));
 		this.toSyncPartitionId = getEnvironment().getWriter(syncGateIndex).getPartitionId();
 	}
 

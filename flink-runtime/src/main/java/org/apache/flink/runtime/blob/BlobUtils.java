@@ -22,9 +22,10 @@ import org.apache.flink.api.common.JobID;
 import org.apache.flink.configuration.BlobServerOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ConfigurationUtils;
+import org.apache.flink.configuration.HighAvailabilityOptions;
+import org.apache.flink.configuration.IllegalConfigurationException;
 import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.core.fs.Path;
-import org.apache.flink.runtime.highavailability.HighAvailabilityServicesUtils;
 import org.apache.flink.runtime.jobmanager.HighAvailabilityMode;
 import org.apache.flink.util.InstantiationUtil;
 import org.apache.flink.util.StringUtils;
@@ -45,6 +46,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Random;
 import java.util.UUID;
+
+import static org.apache.flink.util.StringUtils.isNullOrWhitespaceOnly;
 
 /**
  * Utility class to work with blob data.
@@ -85,26 +88,47 @@ public class BlobUtils {
 	 * 		thrown if the (distributed) file storage cannot be created
 	 */
 	public static BlobStoreService createBlobStoreFromConfig(Configuration config) throws IOException {
-		if (HighAvailabilityMode.isHighAvailabilityModeActivated(config)) {
+		HighAvailabilityMode highAvailabilityMode = HighAvailabilityMode.fromConfig(config);
+
+		if (highAvailabilityMode == HighAvailabilityMode.NONE) {
+			return new VoidBlobStore();
+		} else if (highAvailabilityMode == HighAvailabilityMode.FILESYSTEM ||
+				highAvailabilityMode == HighAvailabilityMode.ZOOKEEPER) {
 			return createFileSystemBlobStore(config);
 		} else {
-			return new VoidBlobStore();
+			throw new IllegalConfigurationException("Unexpected high availability mode '" + highAvailabilityMode + "'.");
 		}
 	}
 
 	private static BlobStoreService createFileSystemBlobStore(Configuration configuration) throws IOException {
-		final Path clusterStoragePath = HighAvailabilityServicesUtils.getClusterHighAvailableStoragePath(configuration);
+		String storagePath = configuration.getValue(
+			HighAvailabilityOptions.HA_STORAGE_PATH);
+		if (isNullOrWhitespaceOnly(storagePath)) {
+			throw new IllegalConfigurationException("Configuration is missing the mandatory parameter: " +
+				HighAvailabilityOptions.HA_STORAGE_PATH);
+		}
+
+		final Path path;
+		try {
+			path = new Path(storagePath);
+		} catch (Exception e) {
+			throw new IOException("Invalid path for highly available storage (" +
+				HighAvailabilityOptions.HA_STORAGE_PATH.key() + ')', e);
+		}
 
 		final FileSystem fileSystem;
 		try {
-			fileSystem = clusterStoragePath.getFileSystem();
+			fileSystem = path.getFileSystem();
 		} catch (Exception e) {
-			throw new IOException(
-				String.format("Could not create FileSystem for highly available storage path (%s)", clusterStoragePath),
-				e);
+			throw new IOException("Could not create FileSystem for highly available storage (" +
+				HighAvailabilityOptions.HA_STORAGE_PATH.key() + ')', e);
 		}
 
-		return new FileSystemBlobStore(fileSystem, clusterStoragePath.toUri().toString());
+		final String clusterId =
+			configuration.getValue(HighAvailabilityOptions.HA_CLUSTER_ID);
+		storagePath += "/" + clusterId;
+
+		return new FileSystemBlobStore(fileSystem, storagePath);
 	}
 
 	/**
@@ -169,9 +193,27 @@ public class BlobUtils {
 	static File getIncomingDirectory(File storageDir) throws IOException {
 		final File incomingDir = new File(storageDir, "incoming");
 
-		Files.createDirectories(incomingDir.toPath());
+		mkdirTolerateExisting(incomingDir);
 
 		return incomingDir;
+	}
+
+	/**
+	 * Makes sure a given directory exists by creating it if necessary.
+	 *
+	 * @param dir
+	 * 		directory to create
+	 *
+	 * @throws IOException
+	 * 		if creating the directory fails
+	 */
+	private static void mkdirTolerateExisting(final File dir) throws IOException {
+		// note: thread-safe create should try to mkdir first and then ignore the case that the
+		//       directory already existed
+		if (!dir.mkdirs() && !dir.exists()) {
+			throw new IOException(
+				"Cannot create directory '" + dir.getAbsolutePath() + "'.");
+		}
 	}
 
 	/**
@@ -193,7 +235,7 @@ public class BlobUtils {
 			File storageDir, @Nullable JobID jobId, BlobKey key) throws IOException {
 		File file = new File(getStorageLocationPath(storageDir.getAbsolutePath(), jobId, key));
 
-		Files.createDirectories(file.getParentFile().toPath());
+		mkdirTolerateExisting(file.getParentFile());
 
 		return file;
 	}

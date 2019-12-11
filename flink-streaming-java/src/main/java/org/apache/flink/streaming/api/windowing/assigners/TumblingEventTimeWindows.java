@@ -51,8 +51,8 @@ public class TumblingEventTimeWindows extends WindowAssigner<Object, TimeWindow>
 	private final long offset;
 
 	protected TumblingEventTimeWindows(long size, long offset) {
-		if (Math.abs(offset) >= size) {
-			throw new IllegalArgumentException("TumblingEventTimeWindows parameters must satisfy abs(offset) < size");
+		if (offset < 0 || offset >= size) {
+			throw new IllegalArgumentException("TumblingEventTimeWindows parameters must satisfy 0 <= offset < size");
 		}
 
 		this.size = size;

@@ -52,9 +52,8 @@ public class SlidingProcessingTimeWindows extends WindowAssigner<Object, TimeWin
 	private final long slide;
 
 	private SlidingProcessingTimeWindows(long size, long slide, long offset) {
-		if (Math.abs(offset) >= slide || size <= 0) {
-			throw new IllegalArgumentException("SlidingProcessingTimeWindows parameters must satisfy " +
-				"abs(offset) < slide and size > 0");
+		if (offset < 0 || offset >= slide || size <= 0) {
+			throw new IllegalArgumentException("SlidingProcessingTimeWindows parameters must satisfy 0 <= offset < slide and size > 0");
 		}
 
 		this.size = size;
@@ -124,7 +123,8 @@ public class SlidingProcessingTimeWindows extends WindowAssigner<Object, TimeWin
 	 * @return The time policy.
 	 */
 	public static SlidingProcessingTimeWindows of(Time size, Time slide, Time offset) {
-		return new SlidingProcessingTimeWindows(size.toMilliseconds(), slide.toMilliseconds(), offset.toMilliseconds());
+		return new SlidingProcessingTimeWindows(size.toMilliseconds(), slide.toMilliseconds(),
+			offset.toMilliseconds() % slide.toMilliseconds());
 	}
 
 	@Override

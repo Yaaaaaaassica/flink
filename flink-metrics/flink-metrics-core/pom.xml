@@ -23,9 +23,9 @@ under the License.
 	<modelVersion>4.0.0</modelVersion>
 
 	<parent>
-		<groupId>org.apache.flink</groupId>
+		<groupId>com.alibaba.blink</groupId>
 		<artifactId>flink-metrics</artifactId>
-		<version>20191101</version>
+		<version>1.5.1</version>
 		<relativePath>..</relativePath>
 	</parent>
 
@@ -33,12 +33,6 @@ under the License.
 	<name>flink-metrics-core</name>
 
 	<packaging>jar</packaging>
-
-	<dependencies>
-		<!-- ================== test dependencies ================== -->
-
-
-	</dependencies>
 
 	<build>
 		<plugins>

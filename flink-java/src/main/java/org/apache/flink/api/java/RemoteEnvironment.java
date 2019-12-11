@@ -19,11 +19,15 @@
 package org.apache.flink.api.java;
 
 import org.apache.flink.annotation.Public;
+import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.api.common.InvalidProgramException;
 import org.apache.flink.api.common.JobExecutionResult;
+import org.apache.flink.api.common.JobID;
+import org.apache.flink.api.common.JobSubmissionResult;
 import org.apache.flink.api.common.Plan;
 import org.apache.flink.api.common.PlanExecutor;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.util.ShutdownHookUtil;
 
 import java.io.File;
 import java.net.MalformedURLException;
@@ -57,6 +61,12 @@ public class RemoteEnvironment extends ExecutionEnvironment {
 
 	/** The configuration used by the client that connects to the cluster. */
 	protected Configuration clientConfiguration;
+
+	/** The remote executor lazily created upon first use. */
+	protected PlanExecutor executor;
+
+	/** Optional shutdown hook, used in session mode to eagerly terminate the last session. */
+	private Thread shutdownHook;
 
 	/** The classpaths that need to be attached to each job. */
 	protected final List<URL> globalClasspaths;
@@ -152,17 +162,116 @@ public class RemoteEnvironment extends ExecutionEnvironment {
 	// ------------------------------------------------------------------------
 
 	@Override
-	public JobExecutionResult execute(String jobName) throws Exception {
-		final Plan p = createProgramPlan(jobName);
+	public JobSubmissionResult executeInternal(String jobName, boolean detached) throws Exception {
+		PlanExecutor executor = getExecutor();
 
-		final PlanExecutor executor = PlanExecutor.createRemoteExecutor(host, port, clientConfiguration);
-		lastJobExecutionResult = executor.executePlan(p, jarFiles, globalClasspaths);
-		return lastJobExecutionResult;
+		Plan p = createProgramPlan(jobName);
+
+		// Session management is disabled, revert this commit to enable
+		p.setJobId(jobID);
+		p.setSessionTimeout(sessionTimeout);
+
+		JobSubmissionResult result = executor.executePlan(p, detached);
+		if (result != null && result.isJobExecutionResult()) {
+			this.lastJobExecutionResult = (JobExecutionResult) result;
+		}
+		return result;
+	}
+
+	@Override
+	public void cancel(JobID jobId) throws Exception {
+		PlanExecutor executor = getExecutor();
+		if (executor != null) {
+			executor.cancelPlan(jobId);
+		}
+	}
+
+	@Override
+	public void stop() throws Exception {
+		PlanExecutor executor = getExecutor();
+		if (executor != null) {
+			executor.stop();
+		}
+	}
+
+	@Override
+	public String getExecutionPlan() throws Exception {
+		Plan p = createProgramPlan("plan", false);
+
+		// make sure that we do not start an new executor here
+		// if one runs, fine, of not, we create a local executor (lightweight) and let it
+		// generate the plan
+		if (executor != null) {
+			return executor.getOptimizerPlanAsJSON(p);
+		}
+		else {
+			PlanExecutor le = PlanExecutor.createLocalExecutor(null);
+			String plan = le.getOptimizerPlanAsJSON(p);
+
+			le.stop();
+
+			return plan;
+		}
+	}
+
+	@Override
+	@PublicEvolving
+	public void startNewSession() throws Exception {
+		dispose();
+		jobID = JobID.generate();
+		installShutdownHook();
+	}
+
+	protected PlanExecutor getExecutor() throws Exception {
+		if (executor == null) {
+			executor = PlanExecutor.createRemoteExecutor(host, port, clientConfiguration,
+				jarFiles, globalClasspaths);
+			executor.setPrintStatusDuringExecution(getConfig().isSysoutLoggingEnabled());
+			executor.setJobListeners(this.getJobListeners());
+		}
+
+		// if we are using sessions, we keep the executor running
+		if (getSessionTimeout() > 0 && !executor.isRunning()) {
+			executor.start();
+			installShutdownHook();
+		}
+
+		return executor;
+	}
+
+	// ------------------------------------------------------------------------
+	//  Dispose
+	// ------------------------------------------------------------------------
+
+	protected void dispose() {
+		// Remove shutdown hook to prevent resource leaks
+		ShutdownHookUtil.removeShutdownHook(shutdownHook, getClass().getSimpleName(), LOG);
+
+		try {
+			PlanExecutor executor = this.executor;
+			if (executor != null) {
+				executor.endSession(jobID);
+				executor.stop();
+			}
+		}
+		catch (Exception e) {
+			throw new RuntimeException("Failed to dispose the session shutdown hook.");
+		}
 	}
 
 	@Override
 	public String toString() {
 		return "Remote Environment (" + this.host + ":" + this.port + " - parallelism = " +
-				(getParallelism() == -1 ? "default" : getParallelism()) + ").";
+				(getParallelism() == -1 ? "default" : getParallelism()) + ") : " + getIdString();
+	}
+
+	// ------------------------------------------------------------------------
+	//  Shutdown hooks and reapers
+	// ------------------------------------------------------------------------
+
+	protected void installShutdownHook() {
+		if (shutdownHook == null) {
+			this.shutdownHook = ShutdownHookUtil.addShutdownHook(this::dispose, getClass().getSimpleName(), LOG);
+		}
 	}
 }

@@ -58,7 +58,7 @@ stream.keyBy(...).process(new MyProcessFunction())
 
 ## Low-level Joins
 
-To realize low-level operations on two inputs, applications can use `CoProcessFunction` or `KeyedCoProcessFunction`. This
+To realize low-level operations on two inputs, applications can use `CoProcessFunction`. This
 function is bound to two different inputs and gets individual calls to `processElement1(...)` and
 `processElement2(...)` for records from the two different inputs.
 
@@ -77,16 +77,16 @@ trade.
 
 ## Example
 
-In the following example a `KeyedProcessFunction` maintains counts per key, and emits a key/count pair whenever a minute passes (in event time) without an update for that key:
+The following example maintains counts per key, and emits a key/count pair whenever a minute passes (in event time) without an update for that key:
 
   - The count, key, and last-modification-timestamp are stored in a `ValueState`, which is implicitly scoped by key.
-  - For each record, the `KeyedProcessFunction` increments the counter and sets the last-modification timestamp
+  - For each record, the `ProcessFunction` increments the counter and sets the last-modification timestamp
   - The function also schedules a callback one minute into the future (in event time)
   - Upon each callback, it checks the callback's event time timestamp against the last-modification time of the stored count
     and emits the key/count if they match (i.e., no further update occurred during that minute)
 
 <span class="label label-info">Note</span> This simple example could have been implemented with
-session windows. We use `KeyedProcessFunction` here to illustrate the basic pattern it provides.
+session windows. We use `ProcessFunction` here to illustrate the basic pattern it provides.
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
@@ -94,12 +94,11 @@ session windows. We use `KeyedProcessFunction` here to illustrate the basic patt
 {% highlight java %}
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.api.java.tuple.Tuple;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
-import org.apache.flink.streaming.api.functions.KeyedProcessFunction.Context;
-import org.apache.flink.streaming.api.functions.KeyedProcessFunction.OnTimerContext;
+import org.apache.flink.streaming.api.functions.ProcessFunction;
+import org.apache.flink.streaming.api.functions.ProcessFunction.Context;
+import org.apache.flink.streaming.api.functions.ProcessFunction.OnTimerContext;
 import org.apache.flink.util.Collector;
 
 
@@ -124,8 +123,7 @@ public class CountWithTimestamp {
 /**
  * The implementation of the ProcessFunction that maintains the count and timeouts
  */
-public class CountWithTimeoutFunction 
-        extends KeyedProcessFunction<Tuple, Tuple2<String, String>, Tuple2<String, Long>> {
+public class CountWithTimeoutFunction extends ProcessFunction<Tuple2<String, String>, Tuple2<String, Long>> {
 
     /** The state that is maintained by this process function */
     private ValueState<CountWithTimestamp> state;
@@ -136,10 +134,8 @@ public class CountWithTimeoutFunction
     }
 
     @Override
-    public void processElement(
-            Tuple2<String, String> value, 
-            Context ctx, 
-            Collector<Tuple2<String, Long>> out) throws Exception {
+    public void processElement(Tuple2<String, String> value, Context ctx, Collector<Tuple2<String, Long>> out)
+            throws Exception {
 
         // retrieve the current count
         CountWithTimestamp current = state.value();
@@ -162,10 +158,8 @@ public class CountWithTimeoutFunction
     }
 
     @Override
-    public void onTimer(
-            long timestamp, 
-            OnTimerContext ctx, 
-            Collector<Tuple2<String, Long>> out) throws Exception {
+    public void onTimer(long timestamp, OnTimerContext ctx, Collector<Tuple2<String, Long>> out)
+            throws Exception {
 
         // get the state for the key that scheduled the timer
         CountWithTimestamp result = state.value();
@@ -184,8 +178,9 @@ public class CountWithTimeoutFunction
 {% highlight scala %}
 import org.apache.flink.api.common.state.ValueState
 import org.apache.flink.api.common.state.ValueStateDescriptor
-import org.apache.flink.api.java.tuple.Tuple
-import org.apache.flink.streaming.api.functions.KeyedProcessFunction
+import org.apache.flink.streaming.api.functions.ProcessFunction
+import org.apache.flink.streaming.api.functions.ProcessFunction.Context
+import org.apache.flink.streaming.api.functions.ProcessFunction.OnTimerContext
 import org.apache.flink.util.Collector
 
 // the source data stream
@@ -204,19 +199,16 @@ case class CountWithTimestamp(key: String, count: Long, lastModified: Long)
 /**
   * The implementation of the ProcessFunction that maintains the count and timeouts
   */
-class CountWithTimeoutFunction extends KeyedProcessFunction[Tuple, (String, String), (String, Long)] {
+class CountWithTimeoutFunction extends ProcessFunction[(String, String), (String, Long)] {
 
   /** The state that is maintained by this process function */
   lazy val state: ValueState[CountWithTimestamp] = getRuntimeContext
     .getState(new ValueStateDescriptor[CountWithTimestamp]("myState", classOf[CountWithTimestamp]))
 
 
-  override def processElement(
-      value: (String, String), 
-      ctx: KeyedProcessFunction[Tuple, (String, String), (String, Long)]#Context, 
-      out: Collector[(String, Long)]): Unit = {
-
+  override def processElement(value: (String, String), ctx: Context, out: Collector[(String, Long)]): Unit = {
     // initialize or retrieve/update the state
+
     val current: CountWithTimestamp = state.value match {
       case null =>
         CountWithTimestamp(value._1, 1, ctx.timestamp)
@@ -231,11 +223,7 @@ class CountWithTimeoutFunction extends KeyedProcessFunction[Tuple, (String, Stri
     ctx.timerService.registerEventTimeTimer(current.lastModified + 60000)
   }
 
-  override def onTimer(
-      timestamp: Long, 
-      ctx: KeyedProcessFunction[Tuple, (String, String), (String, Long)]#OnTimerContext, 
-      out: Collector[(String, Long)]): Unit = {
-
+  override def onTimer(timestamp: Long, ctx: OnTimerContext, out: Collector[(String, Long)]): Unit = {
     state.value match {
       case CountWithTimestamp(key, count, lastModified) if (timestamp == lastModified + 60000) =>
         out.collect((key, count))
@@ -289,18 +277,19 @@ Both types of timers (processing-time and event-time) are internally maintained 
 
 The `TimerService` deduplicates timers per key and timestamp, i.e., there is at most one timer per key and timestamp. If multiple timers are registered for the same timestamp, the `onTimer()` method will be called just once.
 
-<span class="label label-info">Note</span> Flink synchronizes invocations of `onTimer()` and `processElement()`. Hence, users do not have to worry about concurrent modification of state.
+**Note:** Flink synchronizes invocations of `onTimer()` and `processElement()`. Hence, users do not have to worry about concurrent modification of state.
 
 ### Fault Tolerance
 
 Timers are fault tolerant and checkpointed along with the state of the application. 
 In case of a failure recovery or when starting an application from a savepoint, the timers are restored.
 
-<span class="label label-info">Note</span> Checkpointed processing-time timers that were supposed to fire before their restoration, will fire immediately.
+**Note:** Checkpointed processing-time timers that were supposed to fire before their restoration, will fire immediately. 
 This might happen when an application recovers from a failure or when it is started from a savepoint.
 
-<span class="label label-info">Note</span> Timers are always asynchronously checkpointed, except for the combination of RocksDB backend / with incremental snapshots / with heap-based timers (will be resolved with `FLINK-10026`).
-Notice that large numbers of timers can increase the checkpointing time because timers are part of the checkpointed state. See the "Timer Coalescing" section for advice on how to reduce the number of timers.
+**Note:** Timers are always synchronously checkpointed, regardless of the configuration of the state backends. 
+Therefore, a large number of timers can significantly increase checkpointing time. 
+See the "Timer Coalescing" section for advice on how to reduce the number of timers.
 
 ### Timer Coalescing
 
@@ -344,45 +333,3 @@ ctx.timerService.registerEventTimeTimer(coalescedTime)
 {% endhighlight %}
 </div>
 </div>
-
-Timers can also be stopped and removed as follows:
-
-Stopping a processing-time timer:
-
-<div class="codetabs" markdown="1">
-<div data-lang="java" markdown="1">
-{% highlight java %}
-long timestampOfTimerToStop = ...
-ctx.timerService().deleteProcessingTimeTimer(timestampOfTimerToStop);
-{% endhighlight %}
-</div>
-
-<div data-lang="scala" markdown="1">
-{% highlight scala %}
-val timestampOfTimerToStop = ...
-ctx.timerService.deleteProcessingTimeTimer(timestampOfTimerToStop)
-{% endhighlight %}
-</div>
-</div>
-
-Stopping an event-time timer:
-
-<div class="codetabs" markdown="1">
-<div data-lang="java" markdown="1">
-{% highlight java %}
-long timestampOfTimerToStop = ...
-ctx.timerService().deleteEventTimeTimer(timestampOfTimerToStop);
-{% endhighlight %}
-</div>
-
-<div data-lang="scala" markdown="1">
-{% highlight scala %}
-val timestampOfTimerToStop = ...
-ctx.timerService.deleteEventTimeTimer(timestampOfTimerToStop)
-{% endhighlight %}
-</div>
-</div>
-
-<span class="label label-info">Note</span> Stopping a timer has no effect if no such timer with the given timestamp is registered.
-
-{% top %}

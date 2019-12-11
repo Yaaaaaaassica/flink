@@ -33,8 +33,10 @@ import org.apache.flink.util.FlinkRuntimeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
@@ -52,16 +54,34 @@ public class RestartIndividualStrategy extends FailoverStrategy {
 	/** The execution graph to recover */
 	private final ExecutionGraph executionGraph;
 
+	/** The executor that executes restart callbacks */
+	private final Executor callbackExecutor;
+
 	private final SimpleCounter numTaskFailures;
+
+	/**
+	 * Creates a new failover strategy that recovers from failures by restarting only the failed task
+	 * of the execution graph.
+	 * 
+	 * <p>The strategy will use the ExecutionGraph's future executor for callbacks.
+	 * 
+	 * @param executionGraph The execution graph to handle.
+	 */
+	public RestartIndividualStrategy(ExecutionGraph executionGraph) {
+		this(executionGraph, executionGraph.getFutureExecutor());
+	}
 
 	/**
 	 * Creates a new failover strategy that recovers from failures by restarting only the failed task
 	 * of the execution graph.
 	 *
 	 * @param executionGraph The execution graph to handle.
+	 * @param callbackExecutor The executor that executes restart callbacks
 	 */
-	public RestartIndividualStrategy(ExecutionGraph executionGraph) {
+	public RestartIndividualStrategy(ExecutionGraph executionGraph, Executor callbackExecutor) {
 		this.executionGraph = checkNotNull(executionGraph);
+		this.callbackExecutor = checkNotNull(callbackExecutor);
+
 		this.numTaskFailures = new SimpleCounter();
 	}
 
@@ -69,8 +89,6 @@ public class RestartIndividualStrategy extends FailoverStrategy {
 
 	@Override
 	public void onTaskFailure(Execution taskExecution, Throwable cause) {
-
-		executionGraph.getJobMasterMainThreadExecutor().assertRunningInMainThread();
 
 		// to better handle the lack of resources (potentially by a scale-in), we
 		// make failures due to missing resources global failures 
@@ -90,23 +108,24 @@ public class RestartIndividualStrategy extends FailoverStrategy {
 		//       so we could actually avoid the future. We use it anyways because it is cheap and
 		//       it helps to support better testing
 		final CompletableFuture<ExecutionState> terminationFuture = taskExecution.getTerminalStateFuture();
-		terminationFuture.thenRun(
-			() -> performExecutionVertexRestart(taskExecution.getVertex(), taskExecution.getGlobalModVersion()));
-	}
 
-	protected void performExecutionVertexRestart(
-		ExecutionVertex vertexToRecover,
-		long globalModVersion) {
-		try {
-			long createTimestamp = System.currentTimeMillis();
-			Execution newExecution = vertexToRecover.resetForNewExecution(createTimestamp, globalModVersion);
-			newExecution.scheduleForExecution();
-		} catch (GlobalModVersionMismatch e) {
-			// this happens if a concurrent global recovery happens. simply do nothing.
-		} catch (Exception e) {
-			executionGraph.failGlobal(
-				new Exception("Error during fine grained recovery - triggering full recovery", e));
-		}
+		final ExecutionVertex vertexToRecover = taskExecution.getVertex(); 
+		final long globalModVersion = taskExecution.getGlobalModVersion();
+
+		terminationFuture.thenAcceptAsync(
+			(ExecutionState value) -> {
+				try {
+					executionGraph.resetExecutionVerticesAndNotify(globalModVersion, Collections.singletonList(vertexToRecover));
+				}
+				catch (GlobalModVersionMismatch e) {
+					// this happens if a concurrent global recovery happens. simply do nothing.
+				}
+				catch (Exception e) {
+					executionGraph.failGlobal(
+							new Exception("Error during fine grained recovery - triggering full recovery", e));
+				}
+			},
+			callbackExecutor);
 	}
 
 	@Override

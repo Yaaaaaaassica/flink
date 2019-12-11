@@ -19,13 +19,10 @@ package org.apache.flink.api.java;
  * limitations under the License.
  */
 
-import org.apache.flink.api.common.JobExecutionResult;
-import org.apache.flink.api.common.Plan;
 import org.apache.flink.api.common.PlanExecutor;
 import org.apache.flink.api.scala.FlinkILoop;
 import org.apache.flink.configuration.Configuration;
 
-import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
@@ -58,21 +55,37 @@ public class ScalaShellRemoteEnvironment extends RemoteEnvironment {
 	}
 
 	@Override
-	public JobExecutionResult execute(String jobName) throws Exception {
-		final Plan p = createProgramPlan(jobName);
-		final List<URL> allJarFiles = getUpdatedJarFiles();
+	protected PlanExecutor getExecutor() throws Exception {
 
-		final PlanExecutor executor = PlanExecutor.createRemoteExecutor(host, port, clientConfiguration);
-		lastJobExecutionResult = executor.executePlan(p, allJarFiles, globalClasspaths);
-		return lastJobExecutionResult;
-	}
-
-	private List<URL> getUpdatedJarFiles() throws MalformedURLException {
 		// write generated classes to disk so that they can be shipped to the cluster
 		URL jarUrl = flinkILoop.writeFilesToDisk().getAbsoluteFile().toURI().toURL();
+
 		List<URL> allJarFiles = new ArrayList<>(jarFiles);
 		allJarFiles.add(jarUrl);
-		return allJarFiles;
+
+		// check if we had already started a PlanExecutor. If true, then stop it, because there will
+		// be a new jar file available for the user code classes
+		if (this.executor != null) {
+			this.executor.setJarFiles(allJarFiles);
+		} else {
+			this.executor = PlanExecutor.createRemoteExecutor(
+					host,
+					port,
+					clientConfiguration,
+					allJarFiles,
+					globalClasspaths
+			);
+			executor.setPrintStatusDuringExecution(getConfig().isSysoutLoggingEnabled());
+			executor.setJobListeners(getJobListeners());
+		}
+
+		// if we are using sessions, we keep the executor running
+		if (getSessionTimeout() > 0 && !executor.isRunning()) {
+			executor.start();
+			installShutdownHook();
+		}
+
+		return executor;
 	}
 
 	public static void disableAllContextAndOtherEnvironments() {

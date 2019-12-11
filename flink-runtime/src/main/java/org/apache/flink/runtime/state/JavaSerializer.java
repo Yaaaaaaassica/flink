@@ -19,8 +19,6 @@
 package org.apache.flink.runtime.state;
 
 import org.apache.flink.annotation.Internal;
-import org.apache.flink.api.common.typeutils.SimpleTypeSerializerSnapshot;
-import org.apache.flink.api.common.typeutils.TypeSerializerSnapshot;
 import org.apache.flink.api.common.typeutils.base.TypeSerializerSingleton;
 import org.apache.flink.api.java.typeutils.runtime.DataInputViewStream;
 import org.apache.flink.api.java.typeutils.runtime.DataOutputViewStream;
@@ -95,21 +93,8 @@ final class JavaSerializer<T extends Serializable> extends TypeSerializerSinglet
 		serialize(tmp, target);
 	}
 
-	// ------------------------------------------------------------------------
-
 	@Override
-	public TypeSerializerSnapshot<T> snapshotConfiguration() {
-		return new JavaSerializerSnapshot<>();
-	}
-
-	/**
-	 * Serializer configuration snapshot for compatibility and format evolution.
-	 */
-	@SuppressWarnings("WeakerAccess")
-	public static final class JavaSerializerSnapshot<T extends Serializable> extends SimpleTypeSerializerSnapshot<T> {
-
-		public JavaSerializerSnapshot() {
-			super(JavaSerializer::new);
-		}
+	public boolean canEqual(Object obj) {
+		return obj instanceof JavaSerializer;
 	}
 }

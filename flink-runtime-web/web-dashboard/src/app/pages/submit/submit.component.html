@@ -1,23 +1,21 @@
 <!--
-  ~ Licensed to the Apache Software Foundation (ASF) under one
-  ~ or more contributor license agreements.  See the NOTICE file
-  ~ distributed with this work for additional information
-  ~ regarding copyright ownership.  The ASF licenses this file
-  ~ to you under the Apache License, Version 2.0 (the
-  ~ "License"); you may not use this file except in compliance
-  ~ with the License.  You may obtain a copy of the License at
-  ~
-  ~     http://www.apache.org/licenses/LICENSE-2.0
-  ~
-  ~ Unless required by applicable law or agreed to in writing, software
-  ~ distributed under the License is distributed on an "AS IS" BASIS,
-  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  ~ See the License for the specific language governing permissions and
-  ~ limitations under the License.
+  ~   Licensed to the Apache Software Foundation (ASF) under one
+  ~   or more contributor license agreements.  See the NOTICE file
+  ~   distributed with this work for additional information
+  ~   regarding copyright ownership.  The ASF licenses this file
+  ~   to you under the Apache License, Version 2.0 (the
+  ~   "License"); you may not use this file except in compliance
+  ~   with the License.  You may obtain a copy of the License at
+  ~       http://www.apache.org/licenses/LICENSE-2.0
+  ~   Unless required by applicable law or agreed to in writing, software
+  ~   distributed under the License is distributed on an "AS IS" BASIS,
+  ~   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~   See the License for the specific language governing permissions and
+  ~   limitations under the License.
   -->
 
 <nz-card [nzBordered]="false" [nzTitle]="'Uploaded Jars'" [nzLoading]="isLoading" [nzExtra]="extraTemplate">
-  <ng-container *ngIf="!isYarn">
+  <ng-container *ngIf="!noaccess && !isYarn">
     <nz-table
       [nzSize]="'small'"
       [nzData]="listOfJar"
@@ -45,11 +43,11 @@
                 -
               </div>
             </td>
-            <td class="delete-jar">
+            <td>
               <a nz-popconfirm (click)="$event.stopPropagation();" (nzOnConfirm)="deleteJar(jar)" nzTitle="Are you sure delete this jar?">Delete</a>
             </td>
           </tr>
-          <tr [nzExpand]="expandedMap.get(jar.id)">
+          <tr [nzExpand]="expandedMap[jar.id]">
             <td colspan="4">
               <form nz-form [nzLayout]="'inline'" [formGroup]="validateForm">
                 <nz-form-item>
@@ -92,7 +90,7 @@
                 <nz-form-item>
                   <nz-form-control>
                     <button nz-button (click)="showPlan(jar)">Show Plan</button>
-                    <button nz-button nzType="primary" (click)="submitJob(jar)">Submit</button>
+                    <button nz-button nzType="primary" (click)="submit(jar)">Submit</button>
                   </nz-form-control>
                 </nz-form-item>
               </form>
@@ -102,15 +100,19 @@
       </tbody>
     </nz-table>
   </ng-container>
-  <ng-container *ngIf="!noAccess && isYarn">
+  <ng-container *ngIf="noaccess">
+    {{ noaccess }}
+  </ng-container>
+  <ng-container *ngIf="isYarn">
     <span *ngIf="!address">Yarn's AM proxy doesn't allow file uploads. Please wait while we fetch an alternate url for you to use</span>
     <span *ngIf="address">Yarn's AM proxy doesn't allow file uploads. You can visit&nbsp;<a [attr.href]="address+'/#/submit'">here</a>&nbsp;to access this functionality.</span>
   </ng-container>
 </nz-card>
 <ng-template #extraTemplate>
-  <div class="extra" *ngIf="!noAccess && !isYarn">
+  <div class="extra" *ngIf="!noaccess && !isYarn">
     <ng-container *ngIf="!isUploading">
-      <input flinkFileRead type="file" class="input-file" id="upload-file" (fileRead)="uploadJar($event)">
+      <!-- TODO: file type validation -->
+      <input nzFileRead type="file" class="input-file" id="upload-file" (fileRead)="uploadJar($event)">
       <label for="upload-file" class="upload ant-btn-primary ant-btn ant-btn-sm">
         <span><i nz-icon type="plus"></i>Add New</span>
       </label>
@@ -118,6 +120,11 @@
     <nz-progress *ngIf="isUploading" [nzPercent]="progress" nzSize="small" [nzShowInfo]="false"></nz-progress>
   </div>
 </ng-template>
-<nz-drawer [nzHeight]="'100%'" [nzVisible]="planVisible" [nzPlacement]="'bottom'" [nzTitle]="'Plan Visualization'" (nzOnClose)="hidePlan()">
+<nz-drawer
+  [nzHeight]="'100%'"
+  [nzVisible]="visible"
+  nzPlacement="top"
+  nzTitle="Plan Visualization"
+  (nzOnClose)="close()">
   <flink-dagre></flink-dagre>
 </nz-drawer>

@@ -18,19 +18,9 @@
 
 package org.apache.flink.configuration;
 
-import org.apache.flink.api.common.time.Time;
-
 import javax.annotation.Nonnull;
 
 import java.io.File;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Properties;
-import java.util.Set;
-
-import static org.apache.flink.configuration.MetricOptions.SYSTEM_RESOURCE_METRICS;
-import static org.apache.flink.configuration.MetricOptions.SYSTEM_RESOURCE_METRICS_PROBING_INTERVAL;
 
 /**
  * Utility class for {@link Configuration} related helper functions.
@@ -38,57 +28,6 @@ import static org.apache.flink.configuration.MetricOptions.SYSTEM_RESOURCE_METRI
 public class ConfigurationUtils {
 
 	private static final String[] EMPTY = new String[0];
-
-	/**
-	 * Get job manager's heap memory. This method will check the new key
-	 * {@link JobManagerOptions#JOB_MANAGER_HEAP_MEMORY} and
-	 * the old key {@link JobManagerOptions#JOB_MANAGER_HEAP_MEMORY_MB} for backwards compatibility.
-	 *
-	 * @param configuration the configuration object
-	 * @return the memory size of job manager's heap memory.
-	 */
-	public static MemorySize getJobManagerHeapMemory(Configuration configuration) {
-		if (configuration.containsKey(JobManagerOptions.JOB_MANAGER_HEAP_MEMORY.key())) {
-			return MemorySize.parse(configuration.getString(JobManagerOptions.JOB_MANAGER_HEAP_MEMORY));
-		} else if (configuration.containsKey(JobManagerOptions.JOB_MANAGER_HEAP_MEMORY_MB.key())) {
-			return MemorySize.parse(configuration.getInteger(JobManagerOptions.JOB_MANAGER_HEAP_MEMORY_MB) + "m");
-		} else {
-			//use default value
-			return MemorySize.parse(JobManagerOptions.JOB_MANAGER_HEAP_MEMORY.defaultValue());
-		}
-	}
-
-	/**
-	 * Get task manager's heap memory. This method will check the new key
-	 * {@link TaskManagerOptions#TASK_MANAGER_HEAP_MEMORY} and
-	 * the old key {@link TaskManagerOptions#TASK_MANAGER_HEAP_MEMORY_MB} for backwards compatibility.
-	 *
-	 * @param configuration the configuration object
-	 * @return the memory size of task manager's heap memory.
-	 */
-	public static MemorySize getTaskManagerHeapMemory(Configuration configuration) {
-		if (configuration.containsKey(TaskManagerOptions.TASK_MANAGER_HEAP_MEMORY.key())) {
-			return MemorySize.parse(configuration.getString(TaskManagerOptions.TASK_MANAGER_HEAP_MEMORY));
-		} else if (configuration.containsKey(TaskManagerOptions.TASK_MANAGER_HEAP_MEMORY_MB.key())) {
-			return MemorySize.parse(configuration.getInteger(TaskManagerOptions.TASK_MANAGER_HEAP_MEMORY_MB) + "m");
-		} else {
-			//use default value
-			return MemorySize.parse(TaskManagerOptions.TASK_MANAGER_HEAP_MEMORY.defaultValue());
-		}
-	}
-
-	/**
-	 * @return extracted {@link MetricOptions#SYSTEM_RESOURCE_METRICS_PROBING_INTERVAL} or {@code Optional.empty()} if
-	 * {@link MetricOptions#SYSTEM_RESOURCE_METRICS} are disabled.
-	 */
-	public static Optional<Time> getSystemResourceMetricsProbingInterval(Configuration configuration) {
-		if (!configuration.getBoolean(SYSTEM_RESOURCE_METRICS)) {
-			return Optional.empty();
-		} else {
-			return Optional.of(Time.milliseconds(
-				configuration.getLong(SYSTEM_RESOURCE_METRICS_PROBING_INTERVAL)));
-		}
-	}
 
 	/**
 	 * Extracts the task manager directories for temporary files as defined by
@@ -115,58 +54,16 @@ public class ConfigurationUtils {
 		return splitPaths(configValue);
 	}
 
-	public static Time getStandaloneClusterStartupPeriodTime(Configuration configuration) {
-		final Time timeout;
-		long standaloneClusterStartupPeriodTime = configuration.getLong(ResourceManagerOptions.STANDALONE_CLUSTER_STARTUP_PERIOD_TIME);
-		if (standaloneClusterStartupPeriodTime >= 0) {
-			timeout = Time.milliseconds(standaloneClusterStartupPeriodTime);
-		} else {
-			timeout = Time.milliseconds(configuration.getLong(JobManagerOptions.SLOT_REQUEST_TIMEOUT));
-		}
-		return timeout;
-	}
-
 	/**
-	 * Creates a new {@link Configuration} from the given {@link Properties}.
+	 * Extracts the working state directories as defined by {@link CheckpointingOptions#WORKING_DIRS}.
 	 *
-	 * @param properties to convert into a {@link Configuration}
-	 * @return {@link Configuration} which has been populated by the values of the given {@link Properties}
+	 * @param configuration configuration object
+	 * @return array of configured directories (in order)
 	 */
 	@Nonnull
-	public static Configuration createConfiguration(Properties properties) {
-		final Configuration configuration = new Configuration();
-
-		final Set<String> propertyNames = properties.stringPropertyNames();
-
-		for (String propertyName : propertyNames) {
-			configuration.setString(propertyName, properties.getProperty(propertyName));
-		}
-
-		return configuration;
-	}
-
-	/**
-	 * Replaces values whose keys are sensitive according to {@link GlobalConfiguration#isSensitive(String)}
-	 * with {@link GlobalConfiguration#HIDDEN_CONTENT}.
-	 *
-	 * <p>This can be useful when displaying configuration values.
-	 *
-	 * @param keyValuePairs for which to hide sensitive values
-	 * @return A map where all sensitive value are hidden
-	 */
-	@Nonnull
-	public static Map<String, String> hideSensitiveValues(Map<String, String> keyValuePairs) {
-		final HashMap<String, String> result = new HashMap<>();
-
-		for (Map.Entry<String, String> keyValuePair : keyValuePairs.entrySet()) {
-			if (GlobalConfiguration.isSensitive(keyValuePair.getKey())) {
-				result.put(keyValuePair.getKey(), GlobalConfiguration.HIDDEN_CONTENT);
-			} else {
-				result.put(keyValuePair.getKey(), keyValuePair.getValue());
-			}
-		}
-
-		return result;
+	public static String[] parseWorkingDirectories(Configuration configuration) {
+		String configValue = configuration.getString(CheckpointingOptions.WORKING_DIRS, "");
+		return splitPaths(configValue);
 	}
 
 	@Nonnull

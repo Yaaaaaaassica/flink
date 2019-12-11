@@ -23,12 +23,13 @@ import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.streaming.api.SimpleTimerService;
 import org.apache.flink.streaming.api.TimeDomain;
 import org.apache.flink.streaming.api.TimerService;
-import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction;
+import org.apache.flink.streaming.api.functions.co.CoProcessFunction;
 import org.apache.flink.streaming.api.operators.AbstractUdfStreamOperator;
 import org.apache.flink.streaming.api.operators.InternalTimer;
 import org.apache.flink.streaming.api.operators.InternalTimerService;
 import org.apache.flink.streaming.api.operators.TimestampedCollector;
 import org.apache.flink.streaming.api.operators.Triggerable;
+import org.apache.flink.streaming.api.operators.TwoInputSelection;
 import org.apache.flink.streaming.api.operators.TwoInputStreamOperator;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.util.OutputTag;
@@ -38,23 +39,23 @@ import static org.apache.flink.util.Preconditions.checkState;
 
 /**
  * A {@link org.apache.flink.streaming.api.operators.StreamOperator} for executing keyed
- * {@link KeyedCoProcessFunction KeyedCoProcessFunction}.
+ * {@link CoProcessFunction CoProcessFunctions}.
  */
 @Internal
 public class KeyedCoProcessOperator<K, IN1, IN2, OUT>
-		extends AbstractUdfStreamOperator<OUT, KeyedCoProcessFunction<K, IN1, IN2, OUT>>
+		extends AbstractUdfStreamOperator<OUT, CoProcessFunction<IN1, IN2, OUT>>
 		implements TwoInputStreamOperator<IN1, IN2, OUT>, Triggerable<K, VoidNamespace> {
 
 	private static final long serialVersionUID = 1L;
 
 	private transient TimestampedCollector<OUT> collector;
 
-	private transient ContextImpl<K, IN1, IN2, OUT> context;
+	private transient ContextImpl<IN1, IN2, OUT> context;
 
-	private transient OnTimerContextImpl<K, IN1, IN2, OUT> onTimerContext;
+	private transient OnTimerContextImpl<IN1, IN2, OUT> onTimerContext;
 
-	public KeyedCoProcessOperator(KeyedCoProcessFunction<K, IN1, IN2, OUT> keyedCoProcessFunction) {
-		super(keyedCoProcessFunction);
+	public KeyedCoProcessOperator(CoProcessFunction<IN1, IN2, OUT> flatMapper) {
+		super(flatMapper);
 	}
 
 	@Override
@@ -72,19 +73,36 @@ public class KeyedCoProcessOperator<K, IN1, IN2, OUT>
 	}
 
 	@Override
-	public void processElement1(StreamRecord<IN1> element) throws Exception {
+	public TwoInputSelection firstInputSelection() {
+		return TwoInputSelection.ANY;
+	}
+
+	@Override
+	public TwoInputSelection processElement1(StreamRecord<IN1> element) throws Exception {
 		collector.setTimestamp(element);
 		context.element = element;
 		userFunction.processElement1(element.getValue(), context, collector);
 		context.element = null;
+		return TwoInputSelection.ANY;
 	}
 
 	@Override
-	public void processElement2(StreamRecord<IN2> element) throws Exception {
+	public TwoInputSelection processElement2(StreamRecord<IN2> element) throws Exception {
 		collector.setTimestamp(element);
 		context.element = element;
 		userFunction.processElement2(element.getValue(), context, collector);
 		context.element = null;
+		return TwoInputSelection.ANY;
+	}
+
+	@Override
+	public void endInput1() throws Exception {
+
+	}
+
+	@Override
+	public void endInput2() throws Exception {
+
 	}
 
 	@Override
@@ -111,13 +129,13 @@ public class KeyedCoProcessOperator<K, IN1, IN2, OUT>
 		return collector;
 	}
 
-	private class ContextImpl<K, IN1, IN2, OUT> extends KeyedCoProcessFunction<K, IN1, IN2, OUT>.Context {
+	private class ContextImpl<IN1, IN2, OUT> extends CoProcessFunction<IN1, IN2, OUT>.Context {
 
 		private final TimerService timerService;
 
 		private StreamRecord<?> element;
 
-		ContextImpl(KeyedCoProcessFunction<K, IN1, IN2, OUT> function, TimerService timerService) {
+		ContextImpl(CoProcessFunction<IN1, IN2, OUT> function, TimerService timerService) {
 			function.super();
 			this.timerService = checkNotNull(timerService);
 		}
@@ -146,22 +164,17 @@ public class KeyedCoProcessOperator<K, IN1, IN2, OUT>
 
 			output.collect(outputTag, new StreamRecord<>(value, element.getTimestamp()));
 		}
-
-		@Override
-		public K getCurrentKey() {
-			return (K) KeyedCoProcessOperator.this.getCurrentKey();
-		}
 	}
 
-	private class OnTimerContextImpl<K, IN1, IN2, OUT> extends KeyedCoProcessFunction<K, IN1, IN2, OUT>.OnTimerContext {
+	private class OnTimerContextImpl<IN1, IN2, OUT> extends CoProcessFunction<IN1, IN2, OUT>.OnTimerContext {
 
 		private final TimerService timerService;
 
 		private TimeDomain timeDomain;
 
-		private InternalTimer<K, VoidNamespace> timer;
+		private InternalTimer<?, VoidNamespace> timer;
 
-		OnTimerContextImpl(KeyedCoProcessFunction<K, IN1, IN2, OUT> function, TimerService timerService) {
+		OnTimerContextImpl(CoProcessFunction<IN1, IN2, OUT> function, TimerService timerService) {
 			function.super();
 			this.timerService = checkNotNull(timerService);
 		}
@@ -190,11 +203,6 @@ public class KeyedCoProcessOperator<K, IN1, IN2, OUT>
 		public TimeDomain timeDomain() {
 			checkState(timeDomain != null);
 			return timeDomain;
-		}
-
-		@Override
-		public K getCurrentKey() {
-			return timer.getKey();
 		}
 	}
 }

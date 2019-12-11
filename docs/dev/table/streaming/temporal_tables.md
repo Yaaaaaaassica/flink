@@ -22,21 +22,18 @@ specific language governing permissions and limitations
 under the License.
 -->
 
-Temporal Tables represent a concept of a (parameterized) view on a changing table that returns the content of a table at a specific point in time.
+Temporal tables represent a concept of changing table that its data is deemed to be effective or valid along some time period.
 
-The changing table can either be a changing history table which tracks the changes (e.g. database changelogs) or a changing dimension table which materializes the changes (e.g. database tables).
+The changing table can be a changing history table where an append-only table underlies. Flink can keep track of the changes and allows for accessing the content of the table at a certain point in time within a query. Currently, this type of requirement is supported by the so-called [temporal table function join](joins.html#join-with-a-temporal-table-function).
 
-For the changing history table, Flink can keep track of the changes and allows for accessing the content of the table at a certain point in time within a query. In Flink, this kind of table is represented by a *Temporal Table Function*.
+The changing table can also be a changing dimension table where an external database underlies. Flink allows for accessing the content of the table at processing time within a query. Currently, this type of requirement is supported by the so-called [temporal table join](joins.html#join-with-a-temporal-table).
 
-For the changing dimension table, Flink allows for accessing the content of the table at processing time within a query. In Flink, this kind of table is represented by a *Temporal Table*.
+The *temporal table function join* and *temporal table join* are different in sql syntax and runtime execution, but they come from the same motivation. The difference is explained in the [join section](joins.html#join-with-a-temporal-table).
 
 * This will be replaced by the TOC
 {:toc}
 
-Motivation
-----------
-
-### Correlate with a changing history table
+## Motivation
 
 Let's assume that we have the following table `RatesHistory`.
 
@@ -53,7 +50,7 @@ rowtime currency   rate
 11:49   Pounds      108
 {% endhighlight %}
 
-`RatesHistory` represents an ever growing append-only table of currency exchange rates with respect to `Yen` (which has a rate of `1`).
+`RatesHistory` represents an ever-growing append-only table of currency exchange rates with respect to `Yen` (which has a rate of `1`).
 For example, the exchange rate for the period from `09:00` to `10:45` of `Euro` to `Yen` was `114`. From `10:45` to `11:15` it was `116`.
 
 Given that we would like to output all current rates at the time `10:58`, we would need the following SQL query to compute a result table:
@@ -68,9 +65,9 @@ WHERE r.rowtime = (
   AND r2.rowtime <= TIME '10:58');
 {% endhighlight %}
 
-The correlated subquery determines the maximum time for the corresponding currency that is lower or equal than the desired time. The outer query lists the rates that have a maximum timestamp.
+The correlated sub-query determines the maximum time for the corresponding currency that is lower than or equal to the desired time. The outer query lists the rates that have a maximum timestamp.
 
-The following table shows the result of such a computation. In our example, the update to `Euro` at `10:45` is taken into account, however, the update to `Euro` at `11:15` and the new entry of `Pounds` are not considered in the table's version at time `10:58`.
+The following table shows the result of such a computation. In our example, the update to `Euro` at `10:45` is taken into account. However, the update to `Euro` at `11:15` and the new entry of `Pounds` are not considered in the table's version at time `10:58`.
 
 {% highlight text %}
 rowtime currency   rate
@@ -80,17 +77,13 @@ rowtime currency   rate
 10:45   Euro        116
 {% endhighlight %}
 
-The concept of *Temporal Tables* aims to simplify such queries, speed up their execution, and reduce Flink's state usage. A *Temporal Table* is a parameterized view on an append-only table that interprets the rows of the append-only table as the changelog of a table and provides the version of that table at a specific point in time. Interpreting the append-only table as a changelog requires the specification of a primary key attribute and a timestamp attribute. The primary key determines which rows are overwritten and the timestamp determines the time during which a row is valid.
+The concept of *temporal tables* aims to simplify such queries, speed up their execution, and reduce Flink's state usage. A *temporal table function* is a parameterized view on an append-only table that interprets the rows of the append-only table as the changelog of a table and provides the version of that table at a specific point in time. Interpreting the append-only table as a changelog requires the specification of a primary key attribute and a timestamp attribute. The primary key determines which rows are overwritten and the timestamp determines the time during which a row is valid.
 
-In the above example `currency` would be a primary key for `RatesHistory` table and `rowtime` would be the timestamp attribute.
+In the above example `currency` would be a primary key for `RatesHistory` table and `rowtime` would be the timestamp attribute. In Flink, this is represented by a *temporal table function*.
 
-In Flink, this is represented by a [*Temporal Table Function*](#temporal-table-function).
+On the other hand, we have the requirement to join a dimension table which is a external database table. This can also be addressed by a *temporal table join*.
 
-### Correlate with a changing dimension table
-
-On the other hand, some use cases require to join a changing dimension table which is an external database table.
-
-Let's assume that `LatestRates` is a table (e.g. stored in) which is materialized with the latest rate. The `LatestRates` is the materialized history `RatesHistory`. Then the content of `LatestRates` table at time `10:58` will be:
+Let's assume that we have a table `LatestRates` (e.g. a MySQL table) that is populated with the latest rate. The above `RatesHistory` is the changelog of it. Then the content of `LatestRates` table at time `10:58` will be:
 
 {% highlight text %}
 10:58> SELECT * FROM LatestRates;
@@ -113,18 +106,16 @@ Euro        119
 Pounds      108
 {% endhighlight %}
 
-In Flink, this is represented by a [*Temporal Table*](#temporal-table).
+In Flink, *temporal tables* only support keeping the current version of the table, so that they can only be queried at processing time.
 
-Temporal Table Function
-------------------------
 
-In order to access the data in a temporal table, one must pass a [time attribute](time_attributes.html) that determines the version of the table that will be returned.
-Flink uses the SQL syntax of [table functions](../udfs.html#table-functions) to provide a way to express it.
+## Temporal Table Functions
 
-Once defined, a *Temporal Table Function* takes a single time argument `timeAttribute` and returns a set of rows.
-This set contains the latest versions of the rows for all of the existing primary keys with respect to the given time attribute.
+In order to access the data in a temporal table, one must pass a [time attribute](time_attributes.html) that determines the version of the returned table. Flink uses the SQL syntax of [table functions](../udfs.html#table-functions) to provide a way to express it.
 
-Assuming that we defined a temporal table function `Rates(timeAttribute)` based on `RatesHistory` table, we could query such a function in the following way:
+Once defined, a *temporal table function* takes in a single time argument `timeAttribute` and returns a set of rows. This set contains the latest versions of the rows for all existing primary keys with respect to the given time attribute.
+
+Assuming that we define a temporal table function `Rates(timeAttribute)` based on `RatesHistory` table, we can query such a function in the following way:
 
 {% highlight sql %}
 SELECT * FROM Rates('10:15');
@@ -144,10 +135,10 @@ rowtime currency   rate
 09:00   Yen           1
 {% endhighlight %}
 
-Each query to `Rates(timeAttribute)` would return the state of the `Rates` for the given `timeAttribute`.
+Each query to `Rates(timeAttribute)` will return the state of the `Rates` for the given `timeAttribute`.
 
 **Note**: Currently, Flink doesn't support directly querying the temporal table functions with a constant time attribute parameter. At the moment, temporal table functions can only be used in joins.
-The example above was used to provide an intuition about what the function `Rates(timeAttribute)` returns.
+The example above is used to provide an intuition about what the function `Rates(timeAttribute)` returns.
 
 See also the page about [joins for continuous queries](joins.html) for more information about how to join with a temporal table.
 
@@ -163,7 +154,7 @@ import org.apache.flink.table.functions.TemporalTableFunction;
 
 // Get the stream and table environments.
 StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-StreamTableEnvironment tEnv = StreamTableEnvironment.create(env);
+StreamTableEnvironment tEnv = TableEnvironment.getTableEnvironment(env);
 
 // Provide a static data set of the rates history table.
 List<Tuple2<String, Long>> ratesHistoryData = new ArrayList<>();
@@ -190,7 +181,7 @@ tEnv.registerFunction("Rates", rates);                                          
 {% highlight scala %}
 // Get the stream and table environments.
 val env = StreamExecutionEnvironment.getExecutionEnvironment
-val tEnv = StreamTableEnvironment.create(env)
+val tEnv = TableEnvironment.getTableEnvironment(env)
 
 // Provide a static data set of the rates history table.
 val ratesHistoryData = new mutable.MutableList[(String, Long)]
@@ -224,14 +215,12 @@ which allows us to use the `Rates` function in [SQL](../sql.html#joins).
 
 ## Temporal Table
 
-<span class="label label-danger">Attention</span> This is only supported in Blink planner.
-
 In order to access data in temporal table, currently one must define a `TableSource` with `LookupableTableSource`. Flink uses the SQL syntax of `FOR SYSTEM_TIME AS OF` to query temporal table, which is proposed in SQL:2011.
 
-Assuming that we defined a temporal table called `LatestRates`, we can query such a table in the following way:
+Assuming that we define a temporal table `LatestRates` table, we can query such a function in the following way:
 
 {% highlight sql %}
-SELECT * FROM LatestRates FOR SYSTEM_TIME AS OF TIME '10:15';
+SELECT * FROM LatestRates FOR SYSTEM TIME AS OF TIMESTAMP '10:15';
 
 currency   rate
 ======== ======
@@ -239,7 +228,7 @@ US Dollar   102
 Euro        114
 Yen           1
 
-SELECT * FROM LatestRates FOR SYSTEM_TIME AS OF TIME '11:00';
+SELECT * FROM LatestRates FOR SYSTEM TIME AS OF TIMESTAMP '11:00';
 
 currency   rate
 ======== ======
@@ -262,14 +251,20 @@ See also the page about [joins for continuous queries](joins.html) for more info
 StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 StreamTableEnvironment tEnv = TableEnvironment.getTableEnvironment(env);
 
-// Create an HBaseTableSource as a temporal table which implements LookableTableSource
-// In the real setup, you should replace this with your own table.
-HBaseTableSource rates = new HBaseTableSource(conf, "Rates");
-rates.setRowKey("currency", String.class);   // currency as the primary key
-rates.addColumn("fam1", "rate", Double.class);
+// Create a CsvTableSource as an example, in production it should be a JdbcTableSource or HBaseTableSource
+// which provides lookup ability. The given path file contains following items:
+// US Dollar, 102
+// Euro, 114
+// Yen, 1
+CsvTableSource rates = CsvTableSource.builder()
+  .path("path/to/csv")
+  .field("currency", DataTypes.STRING)
+  .field("rate", DataTypes.DOUBLE)
+  .uniqueKeys(singleton(singleton("currency")))  // the unique key definition is required here for lookup
+  .build();
 
-// register the temporal table into environment, then we can query it in sql
-tEnv.registerTableSource("Rates", rates);
+// register it into environment, then we can query it in sql
+tEnv.registerTableSource("rates", rates);
 {% endhighlight %}
 </div>
 <div data-lang="scala" markdown="1">
@@ -278,18 +273,24 @@ tEnv.registerTableSource("Rates", rates);
 val env = StreamExecutionEnvironment.getExecutionEnvironment
 val tEnv = TableEnvironment.getTableEnvironment(env)
 
-// Create an HBaseTableSource as a temporal table which implements LookableTableSource
-// In the real setup, you should replace this with your own table.
-val rates = new HBaseTableSource(conf, "Rates")
-rates.setRowKey("currency", String.class)   // currency as the primary key
-rates.addColumn("fam1", "rate", Double.class)
+// Create a CsvTableSource as an example, in production it should be a JdbcTableSource or HBaseTableSource
+// which provides lookup ability. The given path file contains following items:
+// US Dollar, 102
+// Euro, 114
+// Yen, 1
+val rates = CsvTableSource.builder()
+  .path("path/to/csv")
+  .field("currency", DataTypes.STRING)
+  .field("rate", DataTypes.DOUBLE)
+  .uniqueKeys(singleton(singleton("currency")))
+  .build()
 
-// register the temporal table into environment, then we can query it in sql
-tEnv.registerTableSource("Rates", rates)
+// register it into environment, then we can query it in sql
+tEnv.registerTableSource("rates", rates)
 {% endhighlight %}
 </div>
 </div>
 
-See also the page about [how to define LookupableTableSource](../sourceSinks.html#defining-a-tablesource-for-lookups).
+See also the page about [how to define LookupableTableSource](../sourceSinks.html#defining-a-tablesource-with-lookupable).
 
 {% top %}

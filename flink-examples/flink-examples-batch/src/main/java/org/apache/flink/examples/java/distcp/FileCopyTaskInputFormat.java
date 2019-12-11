@@ -23,7 +23,7 @@ import org.apache.flink.api.common.io.statistics.BaseStatistics;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.io.InputSplit;
 import org.apache.flink.core.io.InputSplitAssigner;
-import org.apache.flink.util.Preconditions;
+import org.apache.flink.util.FlinkRuntimeException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,10 +65,18 @@ public class FileCopyTaskInputFormat implements InputFormat<FileCopyTask, FileCo
 		}
 
 		@Override
-		public void returnInputSplit(List<InputSplit> splits, int taskId) {
-			synchronized (this.splits) {
+		public void inputSplitsAssigned(int taskId, List<InputSplit> inputSplits) {
+			for (InputSplit inputSplit : inputSplits) {
+				boolean found = false;
 				for (InputSplit split : splits) {
-					Preconditions.checkState(this.splits.add((FileCopyTaskInputSplit) split));
+					if (split.equals(inputSplit)) {
+						splits.remove(split);
+						found = true;
+						break;
+					}
+				}
+				if (!found) {
+					throw new FlinkRuntimeException("InputSplit not found for " + inputSplit.getSplitNumber());
 				}
 			}
 		}

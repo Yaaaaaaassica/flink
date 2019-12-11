@@ -18,7 +18,7 @@
 
 package org.apache.flink.runtime.jobmaster;
 
-import org.apache.flink.api.common.functions.AggregateFunction;
+import org.apache.flink.api.common.accumulators.Accumulator;
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.runtime.checkpoint.CheckpointCoordinatorGateway;
 import org.apache.flink.runtime.clusterframework.types.AllocationID;
@@ -31,23 +31,33 @@ import org.apache.flink.runtime.executiongraph.ExecutionVertex;
 import org.apache.flink.runtime.io.network.partition.ResultPartition;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionID;
 import org.apache.flink.runtime.jobgraph.IntermediateDataSetID;
+import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.jobgraph.JobStatus;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
+import org.apache.flink.runtime.jobgraph.OperatorID;
+import org.apache.flink.runtime.jobmaster.message.ClassloadingProps;
 import org.apache.flink.runtime.messages.Acknowledge;
 import org.apache.flink.runtime.messages.webmonitor.JobDetails;
+import org.apache.flink.runtime.preaggregatedaccumulators.CommitAccumulator;
 import org.apache.flink.runtime.registration.RegistrationResponse;
 import org.apache.flink.runtime.resourcemanager.ResourceManagerId;
 import org.apache.flink.runtime.rest.handler.legacy.backpressure.OperatorBackPressureStatsResponse;
+import org.apache.flink.runtime.rest.messages.job.JobPendingSlotRequestDetail;
 import org.apache.flink.runtime.rpc.FencedRpcGateway;
 import org.apache.flink.runtime.rpc.RpcTimeout;
 import org.apache.flink.runtime.taskexecutor.AccumulatorReport;
+import org.apache.flink.runtime.taskexecutor.TaskExecutionStatus;
+import org.apache.flink.runtime.taskexecutor.TaskExecutorReportResponse;
 import org.apache.flink.runtime.taskexecutor.slot.SlotOffer;
 import org.apache.flink.runtime.taskmanager.TaskExecutionState;
 import org.apache.flink.runtime.taskmanager.TaskManagerLocation;
+import org.apache.flink.runtime.update.JobUpdateRequest;
 
 import javax.annotation.Nullable;
 
+import java.io.Serializable;
 import java.util.Collection;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -68,6 +78,58 @@ public interface JobMasterGateway extends
 	CompletableFuture<Acknowledge> cancel(@RpcTimeout Time timeout);
 
 	/**
+	 * Cancel the currently executed job.
+	 *
+	 * @param timeout of this operation
+	 * @return Future acknowledge if the cancellation was successful
+	 */
+	CompletableFuture<Acknowledge> stop(@RpcTimeout Time timeout);
+
+	/**
+	 * Request the current JobGraph.
+	 *
+	 * @return A Future to current {@link JobGraph}
+	 */
+	CompletableFuture<JobGraph> requestJobGraph(Time timeout);
+
+	/**
+	 * Trigger update of the executed job.
+	 *
+	 * @param request indicating how to update the job
+	 * @param timeout of this operation
+	 * @return Future which is completed with {@link Acknowledge} once the update was successful
+	 */
+	CompletableFuture<Acknowledge> updateJob(JobUpdateRequest request, Time timeout);
+
+	/**
+	 * Triggers rescaling of the executed job.
+	 *
+	 * @param newParallelism new parallelism of the job
+	 * @param rescalingBehaviour defining how strict the rescaling has to be executed
+	 * @param timeout of this operation
+	 * @return Future which is completed with {@link Acknowledge} once the rescaling was successful
+	 */
+	CompletableFuture<Acknowledge> rescaleJob(
+		int newParallelism,
+		RescalingBehaviour rescalingBehaviour,
+		@RpcTimeout Time timeout);
+
+	/**
+	 * Triggers rescaling of the given set of operators.
+	 *
+	 * @param operators set of operators which shall be rescaled
+	 * @param newParallelism new parallelism of the given set of operators
+	 * @param rescalingBehaviour defining how strict the rescaling has to be executed
+	 * @param timeout of this operation
+	 * @return Future which is completed with {@link Acknowledge} once the rescaling was successful
+	 */
+	CompletableFuture<Acknowledge> rescaleOperators(
+		Collection<JobVertexID> operators,
+		int newParallelism,
+		RescalingBehaviour rescalingBehaviour,
+		@RpcTimeout Time timeout);
+
+	/**
 	 * Updates the task execution state for a given task.
 	 *
 	 * @param taskExecutionState New task execution state for a given task
@@ -77,16 +139,18 @@ public interface JobMasterGateway extends
 			final TaskExecutionState taskExecutionState);
 
 	/**
-	 * Requests the next input split for the {@link ExecutionJobVertex}.
+	 * Requests the next input split for a source operator of the {@link ExecutionJobVertex}.
 	 * The next input split is sent back to the sender as a
 	 * {@link SerializedInputSplit} message.
 	 *
 	 * @param vertexID         The job vertex id
+	 * @param operatorID       The operator id
 	 * @param executionAttempt The execution attempt id
 	 * @return The future of the input split. If there is no further input split, will return an empty object.
 	 */
 	CompletableFuture<SerializedInputSplit> requestNextInputSplit(
 			final JobVertexID vertexID,
+			final OperatorID operatorID,
 			final ExecutionAttemptID executionAttempt);
 
 	/**
@@ -139,6 +203,11 @@ public interface JobMasterGateway extends
 		final Exception cause);
 
 	/**
+	 * Request the classloading props of this job.
+	 */
+	CompletableFuture<ClassloadingProps> requestClassloadingProps();
+
+	/**
 	 * Offers the given slots to the job manager. The response contains the set of accepted slots.
 	 *
 	 * @param taskManagerId identifying the task manager
@@ -149,6 +218,19 @@ public interface JobMasterGateway extends
 	CompletableFuture<Collection<SlotOffer>> offerSlots(
 			final ResourceID taskManagerId,
 			final Collection<SlotOffer> slots,
+			@RpcTimeout final Time timeout);
+
+	/**
+	 * Report existing tasks execution status after jm failover.
+	 *
+	 * @param taskManagerId        the task manager id
+	 * @param tasksExecutionStatus the tasks execution status
+	 * @param timeout              the timeout
+	 * @return Future indicating whether status reporting is successful
+	 */
+	CompletableFuture<TaskExecutorReportResponse> reportTasksExecutionStatus(
+			final ResourceID taskManagerId,
+			final List<TaskExecutionStatus> tasksExecutionStatus,
 			@RpcTimeout final Time timeout);
 
 	/**
@@ -217,6 +299,14 @@ public interface JobMasterGateway extends
 	CompletableFuture<ArchivedExecutionGraph> requestJob(@RpcTimeout Time timeout);
 
 	/**
+	 * Request the details of pending slot requests of the current job.
+	 *
+	 * @param timeout for the rpc call
+	 * @return the list of pending slot requests.
+	 */
+	CompletableFuture<Collection<JobPendingSlotRequestDetail>> requestPendingSlotRequestDetails(@RpcTimeout Time timeout);
+
+	/**
 	 * Triggers taking a savepoint of the executed job.
 	 *
 	 * @param targetDirectory to which to write the savepoint data or null if the
@@ -230,25 +320,11 @@ public interface JobMasterGateway extends
 		@RpcTimeout final Time timeout);
 
 	/**
-	 * Stops the job with a savepoint.
-	 *
-	 * @param targetDirectory to which to write the savepoint data or null if the
-	 *                           default savepoint directory should be used
-	 * @param advanceToEndOfEventTime Flag indicating if the source should inject a {@code MAX_WATERMARK} in the pipeline
-	 *                              to fire any registered event-time timers
-	 * @param timeout for the rpc call
-	 * @return Future which is completed with the savepoint path once completed
-	 */
-	CompletableFuture<String> stopWithSavepoint(
-		@Nullable final String targetDirectory,
-		final boolean advanceToEndOfEventTime,
-		@RpcTimeout final Time timeout);
-
-	/**
 	 * Requests the statistics on operator back pressure.
 	 *
 	 * @param jobVertexId JobVertex for which the stats are requested.
-	 * @return A Future to the {@link OperatorBackPressureStatsResponse}.
+	 * @return A Future to the {@link OperatorBackPressureStatsResponse} or {@code null} if the stats are
+	 * not available (yet).
 	 */
 	CompletableFuture<OperatorBackPressureStatsResponse> requestOperatorBackPressureStats(JobVertexID jobVertexId);
 
@@ -261,13 +337,17 @@ public interface JobMasterGateway extends
 	void notifyAllocationFailure(AllocationID allocationID, Exception cause);
 
 	/**
-	 * Update the aggregate and return the new value.
+	 * Commits a list of aggregated accumulator values.
 	 *
-	 * @param aggregateName The name of the aggregate to update
-	 * @param aggregand The value to add to the aggregate
-	 * @param serializedAggregationFunction The function to apply to the current aggregate and aggregand to
-	 * obtain the new aggregate value, this should be of type {@link AggregateFunction}
-	 * @return The updated aggregate
+	 * @param commitAccumulators accumulators to commit.
 	 */
-	CompletableFuture<Object> updateGlobalAggregate(String aggregateName, Object aggregand, byte[] serializedAggregationFunction);
+	void commitPreAggregatedAccumulator(List<CommitAccumulator> commitAccumulators);
+
+	/**
+	 * Queries an aggregated accumulator with the specific name.
+	 *
+	 * @param name the name of the target accumulator.
+	 * @return Future which is completed with the result of querying accumulator.
+	 */
+	<V, A extends Serializable> CompletableFuture<Accumulator<V, A>> queryPreAggregatedAccumulator(String name);
 }

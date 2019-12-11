@@ -39,21 +39,25 @@ jobmanager.rpc.port: 6123
 
 # The heap size for the JobManager JVM
 
-jobmanager.heap.size: 1024m
+jobmanager.heap.mb: 1024
 
 
 # The heap size for the TaskManager JVM
 
-taskmanager.heap.size: 1024m
+taskmanager.heap.mb: 1024
 
 
 # The number of task slots that each TaskManager offers. Each slot runs one parallel pipeline.
 
-taskmanager.numberOfTaskSlots: 1
+taskmanager.numberOfTaskSlots: 4
 
 # The parallelism used for programs that did not specify and other parallelism.
 
 parallelism.default: 1
+
+# the managed memory size for each task manager.
+
+taskmanager.managed.memory.size: 256
 
 # The default file system scheme and authority.
 # 
@@ -68,7 +72,7 @@ parallelism.default: 1
 # High Availability
 #==============================================================================
 
-# The high-availability mode. Possible options are 'NONE' or 'zookeeper'.
+# The high-availability mode. Possible options are 'NONE', 'FILESYSTEM' or 'zookeeper'.
 #
 # high-availability: zookeeper
 
@@ -93,6 +97,9 @@ parallelism.default: 1
 # The default value is "open" and it can be changed to "creator" if ZK security is enabled
 #
 # high-availability.zookeeper.client.acl: open
+
+# high-availability: filesystem
+# high-availability.filesystem.path.jobgraphs: /tmp/jobgraphs
 
 #==============================================================================
 # Fault tolerance and checkpointing
@@ -120,37 +127,23 @@ parallelism.default: 1
 #
 # state.backend.incremental: false
 
-# The failover strategy, i.e., how the job computation recovers from task failures.
-# Only restart tasks that may have been affected by the task failure, which typically includes
-# downstream tasks and potentially upstream tasks if their produced data is no longer available for consumption.
-
-jobmanager.execution.failover-strategy: region
-
 #==============================================================================
-# Rest & web frontend
+# Web Frontend
 #==============================================================================
 
-# The port to which the REST client connects to. If rest.bind-port has
-# not been specified, then the server will bind to this port as well.
+# The address under which the web-based runtime monitor listens.
 #
-#rest.port: 8081
+#jobmanager.web.address: 0.0.0.0
 
-# The address to which the REST client will connect to
-#
-#rest.address: 0.0.0.0
+# The port under which the web-based runtime monitor listens.
+# A value of -1 deactivates the web server.
 
-# Port range for the REST and web server to bind to.
-#
-#rest.bind-port: 8080-8090
-
-# The address that the REST & web server binds to
-#
-#rest.bind-address: 0.0.0.0
+rest.port: 8081
 
 # Flag to specify whether job submission is enabled from the web-based
 # runtime monitor. Uncomment to disable.
 
-#web.submit.enable: false
+#jobmanager.web.submit.enable: false
 
 #==============================================================================
 # Advanced
@@ -173,6 +166,17 @@ jobmanager.execution.failover-strategy: region
 #
 # io.tmp.dirs: /tmp
 
+# Specify whether TaskManager's managed memory should be allocated when starting
+# up (true) or when memory is requested.
+#
+# We recommend to set this value to 'true' only in setups for pure batch
+# processing (DataSet API). Streaming setups currently do not use the TaskManager's
+# managed memory: The 'rocksdb' state backend uses RocksDB's own memory management,
+# while the 'memory' and 'filesystem' backends explicitly keep data as objects
+# to save on serialization cost.
+#
+# taskmanager.memory.preallocate: false
+
 # The classloading resolve order. Possible values are 'child-first' (Flink's default)
 # and 'parent-first' (Java's default).
 #
@@ -184,11 +188,11 @@ jobmanager.execution.failover-strategy: region
 
 # The amount of memory going to the network stack. These numbers usually need 
 # no tuning. Adjusting them may be necessary in case of an "Insufficient number
-# of network buffers" error. The default min is 64MB, the default max is 1GB.
+# of network buffers" error. The default min is 64MB, teh default max is 1GB.
 # 
 # taskmanager.network.memory.fraction: 0.1
-# taskmanager.network.memory.min: 64mb
-# taskmanager.network.memory.max: 1gb
+# taskmanager.network.memory.min: 67108864
+# taskmanager.network.memory.max: 1073741824
 
 #==============================================================================
 # Flink Cluster Security Configuration

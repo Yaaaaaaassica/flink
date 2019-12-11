@@ -24,7 +24,7 @@ import org.apache.flink.util.Preconditions;
 import java.io.Serializable;
 
 /**
- * Class for Resource Ids identifying Flink's distributed components.
+ * Class for Resource Ids assigned at the FlinkResourceManager.
  */
 public final class ResourceID implements ResourceIDRetrievable, Serializable {
 
@@ -38,8 +38,7 @@ public final class ResourceID implements ResourceIDRetrievable, Serializable {
 	}
 
 	/**
-	 * Gets the Resource Id as string.
-	 *
+	 * Gets the Resource Id as string
 	 * @return Stringified version of the ResourceID
 	 */
 	public final String getResourceIdString() {
@@ -75,10 +74,9 @@ public final class ResourceID implements ResourceIDRetrievable, Serializable {
 	public ResourceID getResourceID() {
 		return this;
 	}
-
+	
 	/**
 	 * Generate a random resource id.
-	 *
 	 * @return A random resource id.
 	 */
 	public static ResourceID generate() {

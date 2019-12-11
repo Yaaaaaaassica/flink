@@ -19,20 +19,13 @@
 package org.apache.flink.configuration;
 
 import org.apache.flink.annotation.PublicEvolving;
-import org.apache.flink.annotation.docs.ConfigGroup;
-import org.apache.flink.annotation.docs.ConfigGroups;
-import org.apache.flink.annotation.docs.Documentation;
-import org.apache.flink.configuration.description.Description;
 
 import static org.apache.flink.configuration.ConfigOptions.key;
-import static org.apache.flink.configuration.description.TextElement.code;
-import static org.apache.flink.configuration.description.TextElement.text;
 
 /**
  * The set of configuration options relating to TaskManager and Task settings.
  */
 @PublicEvolving
-@ConfigGroups(groups = @ConfigGroup(name = "TaskManagerMemory", keyPrefix = "taskmanager.memory"))
 public class TaskManagerOptions {
 
 	// ------------------------------------------------------------------------
@@ -40,28 +33,145 @@ public class TaskManagerOptions {
 	// ------------------------------------------------------------------------
 
 	/**
-	 * JVM heap size for the TaskManagers with memory size.
+	 * How many heap memory a task manager will supply for user.
 	 */
-	@Deprecated
-	public static final ConfigOption<String> TASK_MANAGER_HEAP_MEMORY =
-			key("taskmanager.heap.size")
-			.defaultValue("1024m")
-			.withDescription("JVM heap size for the TaskManagers, which are the parallel workers of" +
-					" the system. On YARN setups, this value is automatically configured to the size of the TaskManager's" +
-					" YARN container, minus a certain tolerance value.");
-
-	/**
-	 * JVM heap size (in megabytes) for the TaskManagers.
-	 *
-	 * @deprecated use {@link #TASK_MANAGER_HEAP_MEMORY}
-	 */
-	@Deprecated
-	public static final ConfigOption<Integer> TASK_MANAGER_HEAP_MEMORY_MB =
+	public static final ConfigOption<Integer> TASK_MANAGER_HEAP_MEMORY =
 			key("taskmanager.heap.mb")
 			.defaultValue(1024)
-			.withDescription("JVM heap size (in megabytes) for the TaskManagers, which are the parallel workers of" +
-				" the system. On YARN setups, this value is automatically configured to the size of the TaskManager's" +
-				" YARN container, minus a certain tolerance value.");
+			.withDescription("How many heap memory (in megabytes) a task manager will supply for user, not including managed memory.");
+
+	/**
+	 * How many cores a task manager will supply for user.
+	 */
+	public static final ConfigOption<Double> TASK_MANAGER_CORE =
+			key("taskmanager.cpu.core")
+			.defaultValue(1.0)
+			.withDescription("How many physical cpu cores a task manager will supply for user");
+
+	/**
+	 * How many direct memory a task manager will supply for user.
+	 */
+	public static final ConfigOption<Integer> TASK_MANAGER_DIRECT_MEMORY =
+			key("taskmanager.direct.memory.mb")
+			.defaultValue(0)
+			.withDescription("How many direct memory (in megabytes) a task manager will supply for user.");
+
+	/**
+	 * How many native memory a task manager will supply for user.
+	 */
+	public static final ConfigOption<Integer> TASK_MANAGER_NATIVE_MEMORY =
+			key("taskmanager.native.memory.mb")
+			.defaultValue(0)
+			.withDescription("How many native memory (in megabytes) a task manager will supply for user.");
+
+	/**
+	 * Extended resources will supply for user.
+	 * Specified as resource-type:value pairs separated by commas.
+	 * such as GPU:1,FPGA:1.
+	 */
+	public static final ConfigOption<String> TASK_MANAGER_EXTENDED_RESOURCES =
+			key("taskmanager.extended.resources")
+			.noDefaultValue()
+			.withDescription("Extended resources will supply for user. " +
+				"Specified as resource-type:value pairs separated by commas. such as GPU:1,FPGA:1.");
+
+	/**
+	 * The heap memory used for task manager process.
+	 */
+	public static final ConfigOption<Integer> TASK_MANAGER_PROCESS_HEAP_MEMORY =
+			key("taskmanager.process.heap.memory.mb")
+			.defaultValue(128)
+			.withDescription("The heap memory (in megabytes) used for task manager process.");
+
+	/**
+	 * The native memory used for task manager process.
+	 */
+	public static final ConfigOption<Integer> TASK_MANAGER_PROCESS_NATIVE_MEMORY =
+			key("taskmanager.process.native.memory.mb")
+			.defaultValue(0)
+			.withDescription("The native memory (in megabytes) used for task manager process.");
+
+	/**
+	 * The direct memory used for netty framework in the task manager process.
+	 */
+	public static final ConfigOption<Integer> TASK_MANAGER_PROCESS_NETTY_MEMORY =
+			key("taskmanager.process.netty.memory.mb")
+			.defaultValue(64)
+			.withDescription("The direct memory (in megabytes) used for netty framework in the task manager process.");
+
+	/**
+	 * Ratio of young generation for dynamic memory in task manager.
+	 */
+	public static final ConfigOption<Double> TASK_MANAGER_MEMORY_DYNAMIC_YOUNG_RATIO =
+			key("taskmanager.jvm.memory.dynamic.young.ratio")
+			.defaultValue(0.25)
+			.withDescription("Ratio of young generation for dynamic memory in task manager.");
+
+	/**
+	 * Ratio of young generation for persistent memory in task manager.
+	 */
+	public static final ConfigOption<Double> TASK_MANAGER_MEMORY_PERSISTENT_YOUNG_RATIO =
+			key("taskmanager.jvm.memory.persistent.young.ratio")
+			.defaultValue(0.1)
+			.withDescription("Ratio of young generation for persistent memory in task manager.");
+
+	/**
+	 * Cpu core limitation for a task manager, used to decide how many slots can be placed on a task manager.
+	 */
+	public static final ConfigOption<Double> TASK_MANAGER_MULTI_SLOTS_MAX_CORE =
+			key("taskmanager.multi-slots.max.cpu.core")
+			.defaultValue(1.0)
+			.withDescription("Cpu core limitation, used to decide how many slots can be placed on a taskmanager.");
+
+	/**
+	 * Memory limitation, used to decide how many slots can be placed on a task manager.
+	 */
+	public static final ConfigOption<Integer> TASK_MANAGER_MULTI_SLOTS_MAX_MEMORY =
+			key("taskmanager.multi-slots.max.memory.mb")
+			.defaultValue(32768)
+			.withDescription("Memory (in megabytes) limitation, used to decide how many slots can be placed " +
+				"on a taskmanager.");
+
+	/**
+	 * Extended resources limitation, used to decide how many slots can be placed on a task manager.
+	 */
+	public static final ConfigOption<String> TASK_MANAGER_MULTI_SLOTS_MAX_EXTENDED_RESOURCES =
+			key("taskmanager.multi-slots.max.extended-resources")
+			.defaultValue("")
+			.withDescription("Extended resources limitation, used to decide how many slots can be placed " +
+				"on a taskmanger. String format is like \"GPU=10,FPGA=12\".");
+
+	/**
+	 * Min cpu cores for a task manager.
+	 */
+	public static final ConfigOption<Double> TASK_MANAGER_MULTI_SLOTS_MIN_CORE =
+			key("taskmanager.multi-slots.min.cpu.core")
+			.defaultValue(1.0)
+			.withDescription("Min cpu core for a taskmanager.");
+
+	/**
+	 * Min memory for a task manager.
+	 */
+	public static final ConfigOption<Integer> TASK_MANAGER_MULTI_SLOTS_MIN_MEMORY =
+			key("taskmanager.multi-slots.min.memory.mb")
+			.defaultValue(1024)
+			.withDescription("Min memory (in megabytes) for taskmanager.");
+
+	/**
+	 * The resource profile for slots in a task executor.
+	 */
+	public static final ConfigOption<String> TASK_MANAGER_RESOURCE_PROFILE_KEY =
+			key("taskmanager.resourceProfile")
+			.defaultValue("")
+			.withDescription("The resource profile of a slot in a task executor.");
+
+	/**
+	 * The resource profile for all the slots in a task executor.
+	 */
+	public static final ConfigOption<String> TASK_MANAGER_TOTAL_RESOURCE_PROFILE_KEY =
+			key("taskmanager.total.resourceProfile")
+			.defaultValue("")
+			.withDescription("The total resource profile of all the slots in a task executor.");
 
 	/**
 	 * Whether to kill the TaskManager when the task thread throws an OutOfMemoryError.
@@ -85,14 +195,14 @@ public class TaskManagerOptions {
 
 	/**
 	 * The config parameter defining the task manager's hostname.
-	 * Overrides {@link #HOST_BIND_POLICY} automatic address binding.
 	 */
 	public static final ConfigOption<String> HOST =
 		key("taskmanager.host")
 			.noDefaultValue()
-			.withDescription("The address of the network interface that the TaskManager binds to." +
-				" This option can be used to define explicitly a binding address. Because" +
-				" different TaskManagers need different values for this option, usually it is specified in an" +
+			.withDescription("The hostname of the network interface that the TaskManager binds to. By default, the" +
+				" TaskManager searches for network interfaces that can connect to the JobManager and other TaskManagers." +
+				" This option can be used to define a hostname if that strategy fails for some reason. Because" +
+				" different TaskManagers need different values for this option, it usually is specified in an" +
 				" additional non-shared TaskManager-specific config file.");
 
 	/**
@@ -105,6 +215,24 @@ public class TaskManagerOptions {
 			.withDescription("The task manager’s IPC port. Accepts a list of ports (“50100,50101”), ranges" +
 				" (“50100-50200”) or a combination of both. It is recommended to set a range of ports to avoid" +
 				" collisions when multiple TaskManagers are running on the same machine.");
+
+	/**
+	 * The default network port the task manager expects to receive transfer envelopes on. The {@code 0} means that
+	 * the TaskManager searches for a free port.
+	 */
+	public static final ConfigOption<Integer> DATA_PORT =
+		key("taskmanager.data.port")
+			.defaultValue(0)
+			.withDescription("The task manager’s port used for data exchange operations.");
+
+	/**
+	 * Config parameter to override SSL support for taskmanager's data transport.
+	 */
+	public static final ConfigOption<Boolean> DATA_SSL_ENABLED =
+		key("taskmanager.data.ssl.enabled")
+			.defaultValue(true)
+			.withDescription("Enable SSL support for the taskmanager data transport. This is applicable only when the" +
+				" global ssl flag " + SecurityOptions.SSL_ENABLED.key() + " is set to true");
 
 	/**
 	 * The initial registration backoff between two consecutive registration attempts. The backoff
@@ -148,9 +276,18 @@ public class TaskManagerOptions {
 				" exceeded without a successful registration, then the TaskManager terminates.");
 
 	/**
+	 * Defines the maximum time it can take for the TaskManager reconnection. If the duration is
+	 * exceeded without a successful reconnection, then disassociate from JM.
+	 */
+	public static final ConfigOption<String> RECONNECTION_TIMEOUT =
+			key("taskmanager.reconnection.timeout")
+					.defaultValue("1 min")
+					.withDescription("Defines the maximum time it can take for the TaskManager reconnection. If the duration is" +
+							" exceeded without a successful reconnection, then disassociate from JM.");
+
+	/**
 	 * The config parameter defining the number of task slots of a task manager.
 	 */
-	@Documentation.CommonOption(position = Documentation.CommonOption.POSITION_PARALLELISM_SLOTS)
 	public static final ConfigOption<Integer> NUM_TASK_SLOTS =
 		key("taskmanager.numberOfTaskSlots")
 			.defaultValue(1)
@@ -173,258 +310,368 @@ public class TaskManagerOptions {
 			.withDeprecatedKeys("taskmanager.debug.memory.logIntervalMs")
 			.withDescription("The interval (in ms) for the log thread to log the current memory usage.");
 
+	public static final ConfigOption<Integer> TASK_MANAGER_CAPACITY_MEMORY_MB =
+		key("taskmanager.capacity.memory.mb")
+			.defaultValue(-1)
+			.withDescription("The overall memory in MB that allocated to the task manager.");
+
+	public static final ConfigOption<Double> TASK_MANAGER_CAPACITY_CPU_CORE =
+		key("taskmanager.capacity.cpu.core")
+			.defaultValue(-1.0)
+			.withDescription("The overall cpu cores allocated to the task manager.");
+
+	// ------------------------------------------------------------------------
+	//  External Shuffle Options
+	// ------------------------------------------------------------------------
+	/**
+	 * Currently we support two shuffle services for blocking result partition. The default
+	 * 'TM' refers to internal task manager shuffle service, and the value 'YARN' indicates
+	 * the external shuffle service deployed on the node manager of yarn.
+	 */
+	public static final ConfigOption<String> TASK_BLOCKING_SHUFFLE_TYPE =
+		key("task.blocking.shuffle.type")
+			.defaultValue("TM")
+			.withDescription("The type of shuffle service used for blocking edge. Currently it can be configured to TM or YARN.");
+
+	/**
+	 * The type of disks that can be used for external result partition on this task manager.
+	 */
+	public static final ConfigOption<String> TASK_MANAGER_OUTPUT_LOCAL_DISK_TYPE =
+		key("taskmanager.output.local-disk.type")
+			.defaultValue("")
+			.withDescription("The disk type preferred to write the shuffle data. If not specified, all the root " +
+				"directories are feasible. If specified, only directories with the configured type are feasible.");
+
+	/**
+	 * The list of dirs to be used for the external result partitions on this task manager.
+	 * This configuration should be computed from the hadoop configuration and should not be
+	 * configured by users manually.
+	 */
+	public static final ConfigOption<String> TASK_MANAGER_OUTPUT_LOCAL_OUTPUT_DIRS =
+		key("taskmanager.output.local-output-dirs")
+			.defaultValue("")
+			.withDescription("The available directories for the external shuffle service. It will be configured " +
+				"automatically and should not be configured manually.");
+
+	/**
+	 * The memory to be allocated from MemoryManager for each external result partition.
+	 */
+	public static final ConfigOption<Integer> TASK_MANAGER_OUTPUT_MEMORY_MB =
+		key("taskmanager.output.memory.mb")
+			.defaultValue(200)
+			.withDescription("The write buffer size for each output in a task.");
+
+	/**
+	 * The maximum number of subpartitions can hash file writer supported.
+	 */
+	public static final ConfigOption<Integer> TASK_MANAGER_OUTPUT_HASH_MAX_SUBPARTITIONS =
+		key("taskmanager.output.hash.max-subpartitions")
+			.defaultValue(200)
+			.withDescription("The maximum number of subpartitions supported by the hash writer.");
+
+	/**
+	 * The maximum of file handles that can be merged at one time. And if
+	 * taskmanager.output.merge.enable-async-merge is set to false, the number of
+	 * final merged files is less than this merge factor.
+	 */
+	public static final ConfigOption<Integer> TASK_MANAGER_OUTPUT_MERGE_FACTOR =
+		key("taskmanager.output.merge.factor")
+			.defaultValue(64)
+			.withDescription("The maximum number of files to merge at once when using the merge writer.");
+
+	/**
+	 * Whether merge to one file or not.
+	 */
+	public static final ConfigOption<Boolean> TASK_MANAGER_OUTPUT_MERGE_TO_ONE_FILE =
+		key("taskmanager.output.merge.merge-to-one-file")
+			.defaultValue(true)
+			.withDescription("Whether to merge to one file finally when using the merge writer. If not, the " +
+				"merge stops once the number of files are less than taskmanager.output.merge.factor.");
+
+	/**
+	 * Whether enable async merging or not, this option only takes effect when merge
+	 * writer is used.
+	 */
+	public static final ConfigOption<Boolean> TASK_MANAGER_OUTPUT_ENABLE_ASYNC_MERGE =
+		key("taskmanager.output.merge.enable-async-merge")
+			.defaultValue(false)
+			.withDescription("Whether to start merge while writing has not been finished.");
+
+	/**
+	 * The maximum number of external subpartitions that can be requested at the same time.
+	 * To support the input selection, there must be at least one input channel in each gate
+	 * that is requested, so this value should be larger than or equal to the number of
+	 * SingleInputGate. If the configured value is smaller than the number of inputs, then
+	 * the larger one will be used. This config option only takes effect when external shuffle
+	 * service is used.
+	 */
+	public static final ConfigOption<Integer> TASK_EXTERNAL_SHUFFLE_MAX_CONCURRENT_REQUESTS =
+		key("task.external.shuffle.max-concurrent-requests")
+			.defaultValue(2000)
+			.withDescription("The maximum number of concurrent requests in the reduce-side tasks.");
+
+	/**
+	 * Number of network buffers to use for each external input channel.
+	 *
+	 * <p>This value should be large for external channels to avoid random reads in the shuffle service
+	 */
+	public static final ConfigOption<Integer> NETWORK_BUFFERS_PER_EXTERNAL_BLOCKING_CHANNEL =
+		key("taskmanager.network.memory.buffers-per-external-blocking-channel")
+			.defaultValue(16)
+			.withDescription("The number of buffers available for each external blocking channel.");
+
+	/**
+	 * Number of extra network buffers for to use for each ingoing external gate (input gate).
+	 * The non-positive value will be replaced with 2 * number of active input channel in the runtime.
+	 */
+	public static final ConfigOption<Integer> NETWORK_EXTRA_BUFFERS_PER_EXTERNAL_BLOCKING_GATE =
+		key("taskmanager.network.memory.floating-buffers-per-external-blocking-gate")
+			.defaultValue(0)
+			.withDescription("taskmanager.network.memory.floating-buffers-per-external-blocking-gate");
+
+	public static final ConfigOption<Boolean> TASK_EXTERNAL_SHUFFLE_ENABLE_COMPRESSION =
+		key("task.external.shuffle.compression.enable")
+			.defaultValue(true)
+			.withDescription("Whether to enable compress shuffle data when using external shuffle.");
+
+	public static final ConfigOption<String> TASK_EXTERNAL_SHUFFLE_COMPRESSION_CODEC =
+		key("task.external.shuffle.compression.codec")
+			.defaultValue("lz4")
+			.withDescription("The codec to use when compress or decompress external shuffle data. " +
+				"Currently supported codecs are lz4, bzip2, gzip. User can also implement " +
+				"interface BlockCompressionFactory and set its class to specify other codecs.");
+
+	public static final ConfigOption<Integer> TASK_EXTERNAL_SHUFFLE_COMPRESSION_BUFFER_SIZE =
+		key("task.external.shuffle.compression.buffer-size")
+			.defaultValue(64 * 1024)
+			.withDescription("The max buffer size to compress external shuffle data.");
+
+	/**
+	 * The duration to retain a partition's data after it has been fully consumed, in seconds.
+	 */
+	public static final ConfigOption<Integer> TASK_EXTERNAL_SHUFFLE_CONSUMED_PARTITION_TTL_IN_SECONDS =
+		key("task.external.shuffle.consumed-partition-ttl-in-seconds")
+			.defaultValue(60 * 60)
+			.withDescription("The time interval to delete the fully consumed shuffle data directories " +
+				"since they become inactive.");
+
+	/**
+	 * The duration to retain a partition's data after its last consumption if it hasn't been fully consumed,
+	 * in seconds.
+	 */
+	public static final ConfigOption<Integer> TASK_EXTERNAL_SHUFFLE_PARTIAL_CONSUMED_PARTITION_TTL_IN_SECONDS =
+		key("task.external.shuffle.partial-consumed-partition-ttl-in-seconds")
+			.defaultValue(60 * 60 * 12)
+			.withDescription("The time interval to delete the partially consumed shuffle data directories " +
+				"since they become inactive.");
+
+	/**
+	 * The duration to retain a partition's data after its last modified time
+	 * if this partition is ready for consumption but hasn't been consumed yet, in seconds.
+	 */
+	public static final ConfigOption<Integer> TASK_EXTERNAL_SHUFFLE_UNCONSUMED_PARTITION_TTL_IN_SECONDS =
+		key("task.external.shuffle.unconsumed-partition-ttl-in-seconds")
+			.defaultValue(60 * 60 * 12)
+			.withDescription("TThe time interval to delete the unconsumed shuffle data directories " +
+				"since they are ready to consume.");
+
+	/**
+	 * The duration to retain a partition's data after its last modified time
+	 * if this partition is unfinished and cannot be consumed, probably due to upstream write failure,
+	 * in seconds.
+	 */
+	public static final ConfigOption<Integer> TASK_EXTERNAL_SHUFFLE_UNFINISHED_PARTITION_TTL_IN_SECONDS =
+		key("task.external.shuffle.unfinished-partition-ttl-in-seconds")
+			.defaultValue(60 * 60)
+			.withDescription("The time interval to delete the writing shuffle data directories " +
+				"since the last writing.");
+
 	// ------------------------------------------------------------------------
 	//  Managed Memory Options
 	// ------------------------------------------------------------------------
 
 	/**
-	 * Size of memory buffers used by the network stack and the memory manager.
+	 * Size of memory buffers used by the network stack and the memory manager (in bytes).
 	 */
-	public static final ConfigOption<String> MEMORY_SEGMENT_SIZE =
+	public static final ConfigOption<Integer> MEMORY_SEGMENT_SIZE =
 			key("taskmanager.memory.segment-size")
-			.defaultValue("32kb")
-			.withDescription("Size of memory buffers used by the network stack and the memory manager.");
+			.defaultValue(32768)
+			.withDescription("Size of memory buffers used by the network stack and the memory manager (in bytes).");
 
 	/**
-	 * Amount of memory to be allocated by the task manager's memory manager. If not
-	 * set, a relative fraction will be allocated, as defined by {@link #LEGACY_MANAGED_MEMORY_FRACTION}.
+	 * Amount of memory to be allocated by the task manager's memory manager (in megabytes). If not
+	 * set, a relative fraction will be allocated, as defined by {@link #MANAGED_MEMORY_FRACTION}.
 	 */
-	@Deprecated
-	public static final ConfigOption<String> LEGACY_MANAGED_MEMORY_SIZE =
-			key("taskmanager.memory.size")
-			.defaultValue("0")
-			.withDescription("The amount of memory (in megabytes) that the task manager reserves on-heap or off-heap" +
-				" (depending on taskmanager.memory.off-heap) for sorting, hash tables, and caching of intermediate" +
-				" results. If unspecified, the memory manager will take a fixed ratio with respect to the size of" +
-				" the task manager JVM as specified by taskmanager.memory.fraction.");
+	public static final ConfigOption<Long> MANAGED_MEMORY_SIZE =
+			key("taskmanager.managed.memory.size")
+			.defaultValue(-1L)
+			.withDeprecatedKeys("taskmanager.memory.size")
+			.withDescription("Amount of memory to be allocated by the task manager's memory manager (in megabytes)." +
+				" If not set, a relative fraction will be allocated.");
 
 	/**
-	 * Fraction of free memory allocated by the memory manager if {@link #LEGACY_MANAGED_MEMORY_SIZE} is
+	 * Fraction of free memory allocated by the memory manager if {@link #MANAGED_MEMORY_SIZE} is
 	 * not set.
 	 */
-	@Deprecated
-	public static final ConfigOption<Float> LEGACY_MANAGED_MEMORY_FRACTION =
+	public static final ConfigOption<Float> MANAGED_MEMORY_FRACTION =
 			key("taskmanager.memory.fraction")
 			.defaultValue(0.7f)
-			.withDescription(new Description.DescriptionBuilder()
-				.text("The relative amount of memory (after subtracting the amount of memory used by network" +
-					" buffers) that the task manager reserves for sorting, hash tables, and caching of intermediate results." +
-					" For example, a value of %s means that a task manager reserves 80% of its memory" +
-					" (on-heap or off-heap depending on taskmanager.memory.off-heap)" +
-					" for internal data buffers, leaving 20% of free memory for the task manager's heap for objects" +
-					" created by user-defined functions. This parameter is only evaluated, if " +
-					LEGACY_MANAGED_MEMORY_SIZE.key() + " is not set.", code("0.8"))
-				.build());
+			.withDescription("The relative amount of memory (after subtracting the amount of memory used by network" +
+				" buffers) that the task manager reserves for sorting, hash tables, and caching of intermediate results." +
+				" For example, a value of `0.8` means that a task manager reserves 80% of its memory" +
+				" for internal data buffers, leaving 20% of free memory for the task manager's heap for objects" +
+				" created by user-defined functions. This parameter is only evaluated, if " + MANAGED_MEMORY_SIZE.key() +
+				" is not set.");
+
+	public static final ConfigOption<Long> FLOATING_MANAGED_MEMORY_SIZE =
+			key("taskmanager.floating.memory.size")
+			.defaultValue(0L);
 
 	/**
 	 * Memory allocation method (JVM heap or off-heap), used for managed memory of the TaskManager
 	 * as well as the network buffers.
 	 **/
-	@Deprecated
 	public static final ConfigOption<Boolean> MEMORY_OFF_HEAP =
 			key("taskmanager.memory.off-heap")
 			.defaultValue(false)
-				.withDescription("Memory allocation method (JVM heap or off-heap), used for managed memory of the" +
-						" TaskManager. For setups with larger quantities of memory, this can" +
-						" improve the efficiency of the operations performed on the memory.");
+			.withDescription("Memory allocation method (JVM heap or off-heap), used for managed memory of the" +
+				" TaskManager as well as the network buffers.");
 
 	/**
-	 * The config parameter for automatically defining the TaskManager's binding address,
-	 * if {@link #HOST} configuration option is not set.
+	 * Whether TaskManager managed memory should be pre-allocated when the TaskManager is starting.
 	 */
-	public static final ConfigOption<String> HOST_BIND_POLICY =
-		key("taskmanager.network.bind-policy")
-			.defaultValue("ip")
-			.withDescription(Description.builder()
-				.text("The automatic address binding policy used by the TaskManager if \"" + HOST.key() + "\" is not set." +
-					" The value should be one of the following:\n")
-				.list(
-					text("\"name\" - uses hostname as binding address"),
-					text("\"ip\" - uses host's ip address as binding address"))
-				.build());
+	public static final ConfigOption<Boolean> MANAGED_MEMORY_PRE_ALLOCATE =
+			key("taskmanager.memory.preallocate")
+			.defaultValue(false)
+			.withDescription("Whether TaskManager managed memory should be pre-allocated when the TaskManager is starting.");
 
 	// ------------------------------------------------------------------------
-	//  Memory Options
+	//  Network Options
 	// ------------------------------------------------------------------------
 
 	/**
-	 * Total Process Memory size for the TaskExecutors.
+	 * Number of buffers used in the network stack. This defines the number of possible tasks and
+	 * shuffles.
+	 *
+	 * @deprecated use {@link #NETWORK_BUFFERS_MEMORY_FRACTION}, {@link #NETWORK_BUFFERS_MEMORY_MIN},
+	 * and {@link #NETWORK_BUFFERS_MEMORY_MAX} instead
 	 */
-	public static final ConfigOption<String> TOTAL_PROCESS_MEMORY =
-		key("taskmanager.memory.total-process.size")
-			.noDefaultValue()
-			.withDescription("Total Process Memory size for the TaskExecutors. This includes all the memory that a"
-				+ " TaskExecutor consumes, consisting of Total Flink Memory, JVM Metaspace, and JVM Overhead. On"
-				+ " containerized setups, this should be set to the container memory.");
+	@Deprecated
+	public static final ConfigOption<Integer> NETWORK_NUM_BUFFERS =
+			key("taskmanager.network.numberOfBuffers")
+			.defaultValue(2048);
 
 	/**
-	 * Total Flink Memory size for the TaskExecutors.
+	 * Fraction of JVM memory to use for network buffers.
 	 */
-	@Documentation.CommonOption(position = Documentation.CommonOption.POSITION_MEMORY)
-	public static final ConfigOption<String> TOTAL_FLINK_MEMORY =
-		key("taskmanager.memory.total-flink.size")
-		.noDefaultValue()
-		.withDeprecatedKeys(TASK_MANAGER_HEAP_MEMORY.key())
-		.withDescription("Total Flink Memory size for the TaskExecutors. This includes all the memory that a"
-			+ " TaskExecutor consumes, except for JVM Metaspace and JVM Overhead. It consists of Framework Heap Memory,"
-			+ " Task Heap Memory, Task Off-Heap Memory, Managed Memory, and Shuffle Memory.");
-
-	/**
-	 * Framework Heap Memory size for TaskExecutors.
-	 */
-	public static final ConfigOption<String> FRAMEWORK_HEAP_MEMORY =
-		key("taskmanager.memory.framework.heap.size")
-			.defaultValue("128m")
-			.withDescription("Framework Heap Memory size for TaskExecutors. This is the size of JVM heap memory reserved"
-				+ " for TaskExecutor framework, which will not be allocated to task slots.");
-
-	/**
-	 * Task Heap Memory size for TaskExecutors.
-	 */
-	public static final ConfigOption<String> TASK_HEAP_MEMORY =
-		key("taskmanager.memory.task.heap.size")
-			.noDefaultValue()
-			.withDescription("Task Heap Memory size for TaskExecutors. This is the size of JVM heap memory reserved for"
-				+ " user code. If not specified, it will be derived as Total Flink Memory minus Framework Heap Memory,"
-				+ " Task Off-Heap Memory, (On-Heap and Off-Heap) Managed Memory and Shuffle Memory.");
-
-	/**
-	 * Task Off-Heap Memory size for TaskExecutors.
-	 */
-	public static final ConfigOption<String> TASK_OFF_HEAP_MEMORY =
-		key("taskmanager.memory.task.off-heap.size")
-			.defaultValue("0b")
-			.withDescription("Task Heap Memory size for TaskExecutors. This is the size of off heap memory (JVM direct"
-				+ " memory or native memory) reserved for user code.");
-
-	/**
-	 * Managed Memory size for TaskExecutors.
-	 */
-	public static final ConfigOption<String> MANAGED_MEMORY_SIZE =
-		key("taskmanager.memory.managed.size")
-			.noDefaultValue()
-			.withDeprecatedKeys(LEGACY_MANAGED_MEMORY_SIZE.key())
-			.withDescription("Managed Memory size for TaskExecutors. This is the size of memory managed by the memory"
-				+ " manager, including both On-Heap Managed Memory and Off-Heap Managed Memory, reserved for sorting,"
-				+ " hash tables, caching of intermediate results and state backends. Memory consumers can either"
-				+ " allocate memory from the memory manager in the form of MemorySegments, or reserve bytes from the"
-				+ " memory manager and keep their memory usage within that boundary. If unspecified, it will be derived"
-				+ " to make up the configured fraction of the Total Flink Memory.");
-
-	/**
-	 * Fraction of Total Flink Memory to be used as Managed Memory, if {@link #MANAGED_MEMORY_SIZE} is not specified.
-	 */
-	public static final ConfigOption<Float> MANAGED_MEMORY_FRACTION =
-		key("taskmanager.memory.managed.fraction")
-			.defaultValue(0.5f)
-			.withDescription("Fraction of Total Flink Memory to be used as Managed Memory, if Managed Memory size is not"
-				+ " explicitly specified.");
-
-	/**
-	 * Off-Heap Managed Memory size for TaskExecutors.
-	 */
-	public static final ConfigOption<String> MANAGED_MEMORY_OFFHEAP_SIZE =
-		key("taskmanager.memory.managed.off-heap.size")
-			.noDefaultValue()
-			.withDescription("Off-Heap Managed Memory size for TaskExecutors. This is the part of Managed Memory that is"
-				+ " off-heap, while the remaining is on-heap. If unspecified, it will be derived to make up the"
-				+ " configured fraction of the Managed Memory size.");
-
-	/**
-	 * Fraction of Managed Memory that Off-Heap Managed Memory takes.
-	 */
-	public static final ConfigOption<Float> MANAGED_MEMORY_OFFHEAP_FRACTION =
-		key("taskmanager.memory.managed.off-heap.fraction")
-			.defaultValue(-1.0f)
-			.withDescription("Fraction of Managed Memory that Off-Heap Managed Memory takes, if Off-Heap Managed Memory"
-				+ " size is not explicitly specified. If the fraction is not explicitly specified (or configured with"
-				+ " negative values), it will be derived from the legacy config option '"
-				+ TaskManagerOptions.MEMORY_OFF_HEAP.key() + "', to use either all on-heap memory or all off-heap memory"
-				+ " for Managed Memory.");
-
-	/**
-	 * Min Shuffle Memory size for TaskExecutors.
-	 */
-	public static final ConfigOption<String> SHUFFLE_MEMORY_MIN =
-		key("taskmanager.memory.shuffle.min")
-			.defaultValue("64m")
-			.withDeprecatedKeys(NettyShuffleEnvironmentOptions.NETWORK_BUFFERS_MEMORY_MIN.key())
-			.withDescription("Min Shuffle Memory size for TaskExecutors. Shuffle Memory is off-heap memory reserved for"
-				+ " ShuffleEnvironment (e.g., network buffers). Shuffle Memory size is derived to make up the configured"
-				+ " fraction of the Total Flink Memory. If the derived size is less/greater than the configured min/max"
-				+ " size, the min/max size will be used. The exact size of Shuffle Memory can be explicitly specified by"
-				+ " setting the min/max to the same value.");
-
-	/**
-	 * Max Shuffle Memory size for TaskExecutors.
-	 */
-	public static final ConfigOption<String> SHUFFLE_MEMORY_MAX =
-		key("taskmanager.memory.shuffle.max")
-			.defaultValue("1g")
-			.withDeprecatedKeys(NettyShuffleEnvironmentOptions.NETWORK_BUFFERS_MEMORY_MAX.key())
-			.withDescription("Max Shuffle Memory size for TaskExecutors. Shuffle Memory is off-heap memory reserved for"
-				+ " ShuffleEnvironment (e.g., network buffers). Shuffle Memory size is derived to make up the configured"
-				+ " fraction of the Total Flink Memory. If the derived size is less/greater than the configured min/max"
-				+ " size, the min/max size will be used. The exact size of Shuffle Memory can be explicitly specified by"
-				+ " setting the min/max to the same value.");
-
-	/**
-	 * Fraction of Total Flink Memory to be used as Shuffle Memory.
-	 */
-	public static final ConfigOption<Float> SHUFFLE_MEMORY_FRACTION =
-		key("taskmanager.memory.shuffle.fraction")
+	public static final ConfigOption<Float> NETWORK_BUFFERS_MEMORY_FRACTION =
+			key("taskmanager.network.memory.fraction")
 			.defaultValue(0.1f)
-			.withDeprecatedKeys(NettyShuffleEnvironmentOptions.NETWORK_BUFFERS_MEMORY_FRACTION.key())
-			.withDescription("Fraction of Total Flink Memory to be used as Shuffle Memory. Shuffle Memory is off-heap"
-				+ " memory reserved for ShuffleEnvironment (e.g., network buffers). Shuffle Memory size is derived to"
-				+ " make up the configured fraction of the Total Flink Memory. If the derived size is less/greater than"
-				+ " the configured min/max size, the min/max size will be used. The exact size of Shuffle Memory can be"
-				+ " explicitly specified by setting the min/max size to the same value.");
+			.withDescription("Fraction of JVM memory to use for network buffers. This determines how many streaming" +
+				" data exchange channels a TaskManager can have at the same time and how well buffered the channels" +
+				" are. If a job is rejected or you get a warning that the system has not enough buffers available," +
+				" increase this value or the min/max values below. Also note, that \"taskmanager.network.memory.min\"" +
+				"` and \"taskmanager.network.memory.max\" may override this fraction.");
 
 	/**
-	 * JVM Metaspace Size for the TaskExecutors.
+	 * Minimum memory size for network buffers (in bytes).
 	 */
-	public static final ConfigOption<String> JVM_METASPACE =
-		key("taskmanager.memory.jvm-metaspace.size")
-			.defaultValue("192m")
-			.withDescription("JVM Metaspace Size for the TaskExecutors.");
+	public static final ConfigOption<Long> NETWORK_BUFFERS_MEMORY_MIN =
+			key("taskmanager.network.memory.min")
+			.defaultValue(64L << 20) // 64 MB
+			.withDescription("Minimum memory size for network buffers (in bytes).");
 
 	/**
-	 * Min JVM Overhead size for the TaskExecutors.
+	 * Maximum memory size for network buffers (in bytes).
 	 */
-	public static final ConfigOption<String> JVM_OVERHEAD_MIN =
-		key("taskmanager.memory.jvm-overhead.min")
-			.defaultValue("128m")
-			.withDescription("Min JVM Overhead size for the TaskExecutors. This is off-heap memory reserved for JVM"
-				+ " overhead, such as thread stack space, I/O direct memory, compile cache, etc. The size of JVM"
-				+ " Overhead is derived to make up the configured fraction of the Total Process Memory. If the derived"
-				+ " size is less/greater than the configured min/max size, the min/max size will be used. The exact size"
-				+ " of JVM Overhead can be explicitly specified by setting the min/max size to the same value.");
+	public static final ConfigOption<Long> NETWORK_BUFFERS_MEMORY_MAX =
+			key("taskmanager.network.memory.max")
+			.defaultValue(1024L << 20) // 1 GB
+			.withDescription("Maximum memory size for network buffers (in bytes).");
 
 	/**
-	 * Max JVM Overhead size for the TaskExecutors.
+	 * Number of network buffers to use for each outgoing/incoming channel (subpartition/input channel).
+	 *
+	 * <p>Reasoning: 1 buffer for in-flight data in the subpartition + 1 buffer for parallel serialization.
 	 */
-	public static final ConfigOption<String> JVM_OVERHEAD_MAX =
-		key("taskmanager.memory.jvm-overhead.max")
-			.defaultValue("1g")
-			.withDescription("Max JVM Overhead size for the TaskExecutors. This is off-heap memory reserved for JVM"
-				+ " overhead, such as thread stack space, I/O direct memory, compile cache, etc. The size of JVM"
-				+ " Overhead is derived to make up the configured fraction of the Total Process Memory. If the derived"
-				+ " size is less/greater than the configured min/max size, the min/max size will be used. The exact size"
-				+ " of JVM Overhead can be explicitly specified by setting the min/max size to the same value.");
+	public static final ConfigOption<Integer> NETWORK_BUFFERS_PER_CHANNEL =
+			key("taskmanager.network.memory.buffers-per-channel")
+			.defaultValue(2)
+			.withDescription("Maximum number of network buffers to use for each outgoing/incoming channel (subpartition/input channel)." +
+				"In credit-based flow control mode, this indicates how many credits are exclusive in each input channel. It should be" +
+				" configured at least 2 for good performance. 1 buffer is for receiving in-flight data in the subpartition and 1 buffer is" +
+				" for parallel serialization.");
 
 	/**
-	 * Fraction of Total Process Memory to be reserved for JVM Overhead.
+	 * Number of network buffers to use for each outgoing channel (subpartition).
+	 *
+	 * <p>Reasoning: 1 buffer for in-flight data in the subpartition + 1 buffer for parallel serialization
 	 */
-	public static final ConfigOption<Float> JVM_OVERHEAD_FRACTION =
-		key("taskmanager.memory.jvm-overhead.fraction")
-			.defaultValue(0.1f)
-			.withDescription("Fraction of Total Process Memory to be reserved for JVM Overhead. This is off-heap memory"
-				+ " reserved for JVM overhead, such as thread stack space, I/O direct memory, compile cache, etc. The"
-				+ " size of JVM Overhead is derived to make up the configured fraction of the Total Process Memory. If"
-				+ " the derived size is less/greater than the configured min/max size, the min/max size will be used."
-				+ " The exact size of JVM Overhead can be explicitly specified by setting the min/max size to the same"
-				+ " value.");
+	public static final ConfigOption<Integer> NETWORK_BUFFERS_PER_SUBPARTITION =
+			key("taskmanager.network.memory.buffers-per-subpartition")
+			.defaultValue(2);
+
+	/**
+	 * Number of extra network buffers to use for each outgoing/incoming gate (result partition/input gate).
+	 */
+	public static final ConfigOption<Integer> NETWORK_EXTRA_BUFFERS_PER_GATE =
+			key("taskmanager.network.memory.floating-buffers-per-gate")
+			.defaultValue(8)
+			.withDescription("Number of extra network buffers to use for each outgoing/incoming gate (result partition/input gate)." +
+				" In credit-based flow control mode, this indicates how many floating credits are shared among all the input channels." +
+				" The floating buffers are distributed based on backlog (real-time output buffers in the subpartition) feedback, and can" +
+				" help relieve back-pressure caused by unbalanced data distribution among the subpartitions. This value should be" +
+				" increased in case of higher round trip times between nodes and/or larger number of machines in the cluster.");
+
+	/**
+	 * Minimum backoff for partition requests of input channels.
+	 */
+	public static final ConfigOption<Integer> NETWORK_REQUEST_BACKOFF_INITIAL =
+			key("taskmanager.network.request-backoff.initial")
+			.defaultValue(100)
+			.withDeprecatedKeys("taskmanager.net.request-backoff.initial")
+			.withDescription("Minimum backoff for partition requests of input channels.");
+
+	/**
+	 * Maximum backoff for partition requests of input channels.
+	 */
+	public static final ConfigOption<Integer> NETWORK_REQUEST_BACKOFF_MAX =
+			key("taskmanager.network.request-backoff.max")
+			.defaultValue(10000)
+			.withDeprecatedKeys("taskmanager.net.request-backoff.max")
+			.withDescription("Maximum backoff for partition requests of input channels.");
+
+	/**
+	 * Boolean flag to enable/disable more detailed metrics about inbound/outbound network queue
+	 * lengths.
+	 */
+	public static final ConfigOption<Boolean> NETWORK_DETAILED_METRICS =
+			key("taskmanager.network.detailed-metrics")
+			.defaultValue(false)
+			.withDescription("Boolean flag to enable/disable more detailed metrics about inbound/outbound network queue lengths.");
+
+	/**
+	 * Boolean flag to enable/disable network credit-based flow control.
+	 *
+	 * @deprecated Will be removed for Flink 1.6 when the old code will be dropped in favour of
+	 * credit-based flow control.
+	 */
+	@Deprecated
+	public static final ConfigOption<Boolean> NETWORK_CREDIT_MODEL =
+			key("taskmanager.network.credit-model")
+			.defaultValue(true)
+			.withDeprecatedKeys("taskmanager.network.credit-based-flow-control.enabled")
+			.withDescription("Boolean flag to enable/disable network credit-based flow control.");
+
+	/** Boolean flag indicates whether to check partition producer state if the task requests a partition failed
+	 * and wants to re-trigger the partition request. The task will re-trigger the partition request
+	 * if the producer is healthy or fail otherwise. */
+	public static final ConfigOption<Boolean> CHECK_PARTITION_PRODUCER_STATE =
+		key("taskmanager.network.check-partition-producer-state")
+			.defaultValue(false)
+			.withDescription("Boolean flag indicates whether to check partition producer state if the task requests" +
+				" a partition failed and wants to re-trigger the partition request. The task will re-trigger the" +
+				" partition request if the producer is healthy or fail otherwise.");
 
 	// ------------------------------------------------------------------------
 	//  Task Options
@@ -452,15 +699,13 @@ public class TaskManagerOptions {
 				" leads to a fatal TaskManager error. A value of 0 deactivates" +
 				" the watch dog.");
 	/**
-	 * This configures how long we wait for the timers in milliseconds to finish all pending timer threads
-	 * when the stream task is cancelled.
+	 * This configures how long we wait for the timers to finish all pending timer threads
+	 * when the stream task is cancelled .
 	 */
 	public static final ConfigOption<Long> TASK_CANCELLATION_TIMEOUT_TIMERS = ConfigOptions
 			.key("task.cancellation.timers.timeout")
 			.defaultValue(7500L)
-			.withDeprecatedKeys("timerservice.exceptional.shutdown.timeout")
-			.withDescription("Time we wait for the timers in milliseconds to finish all pending timer threads" +
-				" when the stream task is cancelled.");
+			.withDeprecatedKeys("timerservice.exceptional.shutdown.timeout");
 
 	/**
 	 * The maximum number of bytes that a checkpoint alignment may buffer.
@@ -476,16 +721,27 @@ public class TaskManagerOptions {
 				" alignment buffers more than the configured amount of data, the checkpoint is aborted (skipped)." +
 				" A value of -1 indicates that there is no limit.");
 
-	// ------------------------------------------------------------------------
+	public static final ConfigOption<Integer> IO_MANAGER_BUFFERED_READ_SIZE =
+			key("io.manager.buffered.read.size")
+					.defaultValue(-1)
+					.withDescription("The buffer size of io manager buffered read, -1 mean" +
+							" not use buffered read, this will reduce random IO, but will" +
+							" result in more than one copy.");
 
-	/**
-	 * Toggle to switch between FLIP-49 and current task manager memory configurations.
-	 */
-	@Documentation.ExcludeFromDocumentation("FLIP-49 is still in development.")
-	public static final ConfigOption<Boolean> ENABLE_FLIP_49_CONFIG =
-			key("taskmanager.enable-flip-49")
-			.defaultValue(false)
-			.withDescription("Toggle to switch between FLIP-49 and current task manager memory configurations.");
+	public static final ConfigOption<Integer> IO_MANAGER_BUFFERED_WRITE_SIZE =
+			key("io.manager.buffered.write.size")
+					.defaultValue(-1)
+					.withDescription("The buffer size of io manager buffered write, -1 mean" +
+							" not use buffered write, this will reduce random IO, but will" +
+							" result in more than one copy.");
+
+	public static final ConfigOption<Integer> IO_MANAGER_ASYNC_NUM_READ_WRITE_THREAD =
+		key("io.manager.async.num-read-write-thread")
+			.defaultValue(-1)
+			.withDescription("The number of async read write thread. " +
+				"If not positive, it will be adjusted to max(1, number of temp dirs) for TM shuffle and max(2, 2 * number of disks) for YARN shuffle.");
+
+	// ------------------------------------------------------------------------
 
 	/** Not intended to be instantiated. */
 	private TaskManagerOptions() {}

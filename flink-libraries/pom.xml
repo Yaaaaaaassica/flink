@@ -23,9 +23,9 @@ under the License.
     <modelVersion>4.0.0</modelVersion>
 
 	<parent>
-		<groupId>org.apache.flink</groupId>
+		<groupId>com.alibaba.blink</groupId>
 		<artifactId>flink-parent</artifactId>
-		<version>20191101</version>
+		<version>1.5.1</version>
 		<relativePath>..</relativePath>
 	</parent>
 
@@ -37,9 +37,15 @@ under the License.
 		<module>flink-gelly</module>
 		<module>flink-gelly-scala</module>
 		<module>flink-gelly-examples</module>
+		<module>flink-python</module>
+		<module>flink-table</module>
+		<module>flink-table-common</module>
+		<module>flink-sql-client</module>
+		<module>flink-sql-parser</module>
+		<module>flink-ml</module>
 		<module>flink-cep</module>
 		<module>flink-cep-scala</module>
-		<module>flink-state-processing-api</module>
+		<module>flink-streaming-python</module>
 	</modules>
 
 	<!-- override these root dependencies as 'provided', so they don't end up
@@ -58,6 +64,9 @@ under the License.
 			<scope>provided</scope>
 		</dependency>
 
-
+		<dependency>
+			<groupId>com.alibaba.blink</groupId>
+			<artifactId>flink-test-utils-junit</artifactId>
+		</dependency>
 	</dependencies>
 </project>

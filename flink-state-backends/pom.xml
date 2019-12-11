@@ -25,9 +25,9 @@ under the License.
 	<modelVersion>4.0.0</modelVersion>
 
 	<parent>
-		<groupId>org.apache.flink</groupId>
+		<groupId>com.alibaba.blink</groupId>
 		<artifactId>flink-parent</artifactId>
-		<version>20191101</version>
+		<version>1.5.1</version>
 		<relativePath>..</relativePath>
 	</parent>
 
@@ -38,6 +38,5 @@ under the License.
 
 	<modules>
 		<module>flink-statebackend-rocksdb</module>
-		<module>flink-statebackend-heap-spillable</module>
 	</modules>
 </project>

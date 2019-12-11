@@ -25,7 +25,6 @@ import org.apache.flink.configuration.IllegalConfigurationException;
 import org.apache.flink.configuration.WebOptions;
 import org.apache.flink.runtime.akka.AkkaUtils;
 import org.apache.flink.runtime.blob.BlobServer;
-import org.apache.flink.runtime.blob.BlobWriter;
 import org.apache.flink.runtime.execution.librarycache.BlobLibraryCacheManager;
 import org.apache.flink.runtime.execution.librarycache.FlinkUserCodeClassLoaders;
 import org.apache.flink.runtime.execution.librarycache.LibraryCacheManager;
@@ -37,12 +36,11 @@ import org.apache.flink.runtime.util.ExecutorThreadFactory;
 import org.apache.flink.runtime.util.Hardware;
 import org.apache.flink.util.ExceptionUtils;
 
-import javax.annotation.Nonnull;
-
-import java.time.Duration;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+
+import scala.concurrent.duration.FiniteDuration;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
@@ -62,23 +60,18 @@ public class JobManagerSharedServices {
 
 	private final BackPressureStatsTracker backPressureStatsTracker;
 
-	@Nonnull
-	private final BlobWriter blobWriter;
-
 	public JobManagerSharedServices(
 			ScheduledExecutorService scheduledExecutorService,
 			LibraryCacheManager libraryCacheManager,
 			RestartStrategyFactory restartStrategyFactory,
 			StackTraceSampleCoordinator stackTraceSampleCoordinator,
-			BackPressureStatsTracker backPressureStatsTracker,
-			@Nonnull BlobWriter blobWriter) {
+			BackPressureStatsTracker backPressureStatsTracker) {
 
 		this.scheduledExecutorService = checkNotNull(scheduledExecutorService);
 		this.libraryCacheManager = checkNotNull(libraryCacheManager);
 		this.restartStrategyFactory = checkNotNull(restartStrategyFactory);
 		this.stackTraceSampleCoordinator = checkNotNull(stackTraceSampleCoordinator);
 		this.backPressureStatsTracker = checkNotNull(backPressureStatsTracker);
-		this.blobWriter = blobWriter;
 	}
 
 	public ScheduledExecutorService getScheduledExecutorService() {
@@ -95,11 +88,6 @@ public class JobManagerSharedServices {
 
 	public BackPressureStatsTracker getBackPressureStatsTracker() {
 		return backPressureStatsTracker;
-	}
-
-	@Nonnull
-	public BlobWriter getBlobWriter() {
-		return blobWriter;
 	}
 
 	/**
@@ -151,7 +139,7 @@ public class JobManagerSharedServices {
 				FlinkUserCodeClassLoaders.ResolveOrder.fromString(classLoaderResolveOrder),
 				alwaysParentFirstLoaderPatterns);
 
-		final Duration timeout;
+		final FiniteDuration timeout;
 		try {
 			timeout = AkkaUtils.getTimeout(config);
 		} catch (NumberFormatException e) {
@@ -183,7 +171,6 @@ public class JobManagerSharedServices {
 			libraryCacheManager,
 			RestartStrategyFactory.createRestartStrategyFactory(config),
 			stackTraceSampleCoordinator,
-			backPressureStatsTracker,
-			blobServer);
+			backPressureStatsTracker);
 	}
 }

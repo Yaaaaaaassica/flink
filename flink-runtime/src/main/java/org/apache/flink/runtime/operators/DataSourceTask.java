@@ -31,7 +31,6 @@ import org.apache.flink.metrics.SimpleCounter;
 import org.apache.flink.runtime.execution.CancelTaskException;
 import org.apache.flink.runtime.execution.Environment;
 import org.apache.flink.runtime.io.network.api.writer.RecordWriter;
-import org.apache.flink.runtime.jobgraph.InputOutputFormatContainer;
 import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.jobgraph.tasks.AbstractInvokable;
 import org.apache.flink.runtime.jobgraph.tasks.InputSplitProvider;
@@ -45,7 +44,6 @@ import org.apache.flink.runtime.operators.util.TaskConfig;
 import org.apache.flink.runtime.operators.util.metrics.CountingCollector;
 import org.apache.flink.util.Collector;
 
-import org.apache.commons.lang3.tuple.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -271,11 +269,9 @@ public class DataSourceTask<OT> extends AbstractInvokable {
 		Configuration taskConf = getTaskConfiguration();
 		this.config = new TaskConfig(taskConf);
 
-		final Pair<OperatorID, InputFormat<OT, InputSplit>> operatorIdAndInputFormat;
-		InputOutputFormatContainer formatContainer = new InputOutputFormatContainer(config, userCodeClassLoader);
 		try {
-			operatorIdAndInputFormat = formatContainer.getUniqueInputFormat();
-			this.format = operatorIdAndInputFormat.getValue();
+			this.format = config.<InputFormat<OT, InputSplit>>getStubWrapper(userCodeClassLoader)
+					.getUserCodeObject(InputFormat.class, userCodeClassLoader);
 
 			// check if the class is a subclass, if the check is required
 			if (!InputFormat.class.isAssignableFrom(this.format.getClass())) {
@@ -293,7 +289,7 @@ public class DataSourceTask<OT> extends AbstractInvokable {
 		// configure the stub. catch exceptions here extra, to report them as originating from the user code
 		try {
 			thread.setContextClassLoader(userCodeClassLoader);
-			this.format.configure(formatContainer.getParameters(operatorIdAndInputFormat.getKey()));
+			this.format.configure(this.config.getStubParameters());
 		}
 		catch (Throwable t) {
 			throw new RuntimeException("The user defined 'configure()' method caused an error: " + t.getMessage(), t);
@@ -315,7 +311,7 @@ public class DataSourceTask<OT> extends AbstractInvokable {
 		this.eventualOutputs = new ArrayList<RecordWriter<?>>();
 
 		this.output = BatchTask.initOutputs(this, cl, this.config, this.chainedTasks, this.eventualOutputs,
-				getExecutionConfig(), getEnvironment().getAccumulatorRegistry().getUserMap());
+				getExecutionConfig(), getEnvironment().getAccumulatorRegistry());
 	}
 
 	// ------------------------------------------------------------------------
@@ -367,7 +363,15 @@ public class DataSourceTask<OT> extends AbstractInvokable {
 
 				final InputSplit split;
 				try {
-					split = provider.getNextInputSplit(getUserCodeClassLoader());
+					/**
+					 * Uses the job vertex id as the operator id.
+					 *
+					 * See {@link org.apache.flink.optimizer.plantranslate.JobGraphGenerator#createDataSourceVertex}
+					 * and {@link org.apache.flink.runtime.jobgraph.InputFormatVertex}.
+					 */
+					OperatorID operatorID = OperatorID.fromJobVertexID(getEnvironment().getJobVertexId());
+
+					split = provider.getNextInputSplit(operatorID, getUserCodeClassLoader());
 				} catch (InputSplitProviderException e) {
 					throw new RuntimeException("Could not retrieve next input split.", e);
 				}
@@ -406,7 +410,7 @@ public class DataSourceTask<OT> extends AbstractInvokable {
 		String sourceName =  getEnvironment().getTaskInfo().getTaskName().split("->")[0].trim();
 		sourceName = sourceName.startsWith("CHAIN") ? sourceName.substring(6) : sourceName;
 		return new DistributedRuntimeUDFContext(env.getTaskInfo(), getUserCodeClassLoader(),
-				getExecutionConfig(), env.getDistributedCacheEntries(), env.getAccumulatorRegistry().getUserMap(), 
-				getEnvironment().getMetricGroup().getOrAddOperator(sourceName));
+				getExecutionConfig(), env.getDistributedCacheEntries(), env.getAccumulatorRegistry(),
+				getEnvironment().getMetricGroup().addOperator(sourceName));
 	}
 }

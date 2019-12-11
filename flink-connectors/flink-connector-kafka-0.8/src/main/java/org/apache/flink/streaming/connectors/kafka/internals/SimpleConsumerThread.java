@@ -19,7 +19,7 @@
 package org.apache.flink.streaming.connectors.kafka.internals;
 
 import org.apache.flink.annotation.Internal;
-import org.apache.flink.streaming.connectors.kafka.KafkaDeserializationSchema;
+import org.apache.flink.streaming.util.serialization.KeyedDeserializationSchema;
 import org.apache.flink.util.ExceptionUtils;
 
 import kafka.api.FetchRequestBuilder;
@@ -32,7 +32,6 @@ import kafka.javaapi.OffsetResponse;
 import kafka.javaapi.consumer.SimpleConsumer;
 import kafka.javaapi.message.ByteBufferMessageSet;
 import kafka.message.MessageAndOffset;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.Node;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -69,7 +68,7 @@ class SimpleConsumerThread<T> extends Thread {
 
 	private final Kafka08Fetcher<T> owner;
 
-	private final KafkaDeserializationSchema<T> deserializer;
+	private final KeyedDeserializationSchema<T> deserializer;
 
 	private final List<KafkaTopicPartitionState<TopicAndPartition>> partitions;
 
@@ -95,7 +94,6 @@ class SimpleConsumerThread<T> extends Thread {
 	private final int fetchSize;
 	private final int bufferSize;
 	private final int reconnectLimit;
-	private final String clientId;
 
 	// exceptions are thrown locally
 	public SimpleConsumerThread(
@@ -105,7 +103,7 @@ class SimpleConsumerThread<T> extends Thread {
 			Node broker,
 			List<KafkaTopicPartitionState<TopicAndPartition>> seedPartitions,
 			ClosableBlockingQueue<KafkaTopicPartitionState<TopicAndPartition>> unassignedPartitions,
-			KafkaDeserializationSchema<T> deserializer,
+			KeyedDeserializationSchema<T> deserializer,
 			long invalidOffsetBehavior) {
 		this.owner = owner;
 		this.errorHandler = errorHandler;
@@ -125,8 +123,6 @@ class SimpleConsumerThread<T> extends Thread {
 		this.fetchSize = getInt(config, "fetch.message.max.bytes", 1048576);
 		this.bufferSize = getInt(config, "socket.receive.buffer.bytes", 65536);
 		this.reconnectLimit = getInt(config, "flink.simple-consumer-reconnectLimit", 3);
-		String groupId = config.getProperty("group.id", "flink-kafka-consumer-legacy-" + broker.id());
-		this.clientId = config.getProperty("client.id", groupId);
 	}
 
 	public ClosableBlockingQueue<KafkaTopicPartitionState<TopicAndPartition>> getNewPartitionsQueue() {
@@ -142,12 +138,16 @@ class SimpleConsumerThread<T> extends Thread {
 		LOG.info("Starting to fetch from {}", this.partitions);
 
 		// set up the config values
+		final String clientId = "flink-kafka-consumer-legacy-" + broker.id();
+
 		try {
 			// create the Kafka consumer that we actually use for fetching
 			consumer = new SimpleConsumer(broker.host(), broker.port(), soTimeout, bufferSize, clientId);
 
 			// replace earliest of latest starting offsets with actual offset values fetched from Kafka
 			requestAndSetEarliestOrLatestOffsetsFromKafka(consumer, partitions);
+
+			requestAndSetLatestEndOffsetsFromKafka(consumer, partitions);
 
 			LOG.info("Starting to consume {} partitions with consumer thread {}", partitions.size(), getName());
 
@@ -209,12 +209,20 @@ class SimpleConsumerThread<T> extends Thread {
 				frb.maxWait(maxWait);
 				frb.minBytes(minBytes);
 
+				boolean hasUnfinishedPartition = false;
 				for (KafkaTopicPartitionState<?> partition : partitions) {
-					frb.addFetch(
-							partition.getKafkaTopicPartition().getTopic(),
-							partition.getKafkaTopicPartition().getPartition(),
-							partition.getOffset() + 1, // request the next record
-							fetchSize);
+					if (!partition.isFinished()) {
+						frb.addFetch(
+								partition.getKafkaTopicPartition().getTopic(),
+								partition.getKafkaTopicPartition().getPartition(),
+								partition.getOffset() + 1, // request the next record
+								fetchSize);
+						hasUnfinishedPartition = true;
+					}
+				}
+				if (!hasUnfinishedPartition) {
+					LOG.info("All partition finished.");
+					break;
 				}
 
 				kafka.api.FetchRequest fetchRequest = frb.build();
@@ -350,6 +358,11 @@ class SimpleConsumerThread<T> extends Thread {
 								continue;
 							}
 
+							if (offset >= currentPartition.getEndOffset()) {
+								currentPartition.setFinished();
+								break;
+							}
+
 							// If the message value is null, this represents a delete command for the message key.
 							// Log this and pass it on to the client who might want to also receive delete messages.
 							byte[] valueBytes;
@@ -371,10 +384,8 @@ class SimpleConsumerThread<T> extends Thread {
 								keyPayload.get(keyBytes);
 							}
 
-							final T value = deserializer.deserialize(
-								new ConsumerRecord<>(
-									currentPartition.getTopic(),
-									currentPartition.getPartition(), keyBytes, valueBytes, offset));
+							final T value = deserializer.deserialize(keyBytes, valueBytes,
+									currentPartition.getTopic(), currentPartition.getPartition(), offset);
 
 							if (deserializer.isEndOfStream(value)) {
 								// remove partition from subscribed partitions.
@@ -383,6 +394,10 @@ class SimpleConsumerThread<T> extends Thread {
 							}
 
 							owner.emitRecord(value, currentPartition, offset);
+
+							if (currentPartition.getOffset() + 1 >= currentPartition.getEndOffset()) {
+								currentPartition.setFinished();
+							}
 						}
 						else {
 							// no longer running
@@ -471,6 +486,71 @@ class SimpleConsumerThread<T> extends Thread {
 		requestAndSetOffsetsFromKafka(consumer, partitions, requestInfo);
 	}
 
+	private static void requestAndSetLatestEndOffsetsFromKafka(
+			SimpleConsumer consumer,
+			List<KafkaTopicPartitionState<TopicAndPartition>> partitions) throws Exception {
+		Map<TopicAndPartition, PartitionOffsetRequestInfo> requestInfo = new HashMap<>();
+		for (KafkaTopicPartitionState<TopicAndPartition> part : partitions) {
+			if (part.getEndOffset() == OffsetRequest.LatestTime()) {
+				requestInfo.put(part.getKafkaPartitionHandle(), new PartitionOffsetRequestInfo(part.getOffset(), 1));
+			}
+		}
+
+		requestAndSetEndOffsetsFromKafka(consumer, partitions, requestInfo);
+	}
+
+	private static void requestAndSetEndOffsetsFromKafka(
+			SimpleConsumer consumer,
+			List<KafkaTopicPartitionState<TopicAndPartition>> partitionStates,
+			Map<TopicAndPartition, PartitionOffsetRequestInfo> partitionToRequestInfo) throws IOException {
+
+		OffsetResponse response = getOffsetResponse(consumer, partitionStates, partitionToRequestInfo);
+
+		for (KafkaTopicPartitionState<TopicAndPartition> part: partitionStates) {
+			// there will be offsets only for partitions that were requested for
+			if (partitionToRequestInfo.containsKey(part.getKafkaPartitionHandle())) {
+				final long offset = response.offsets(part.getTopic(), part.getPartition())[0];
+
+				// the offset returned is that of the next record to fetch. because our state reflects the latest
+				// successfully emitted record, we subtract one
+				part.setEndOffset(offset);
+			}
+		}
+	}
+
+	private static OffsetResponse getOffsetResponse(SimpleConsumer consumer,
+			List<KafkaTopicPartitionState<TopicAndPartition>> partitionStates,
+			Map<TopicAndPartition, PartitionOffsetRequestInfo> partitionToRequestInfo) throws IOException {
+		OffsetResponse response;
+		int retries = 0;
+		while (true) {
+			kafka.javaapi.OffsetRequest request = new kafka.javaapi.OffsetRequest(
+					partitionToRequestInfo, OffsetRequest.CurrentVersion(), consumer.clientId());
+			response = consumer.getOffsetsBefore(request);
+
+			if (response.hasError()) {
+				StringBuilder exception = new StringBuilder();
+				for (KafkaTopicPartitionState<TopicAndPartition> part : partitionStates) {
+					short code;
+					if ((code = response.errorCode(part.getTopic(), part.getPartition())) != ErrorMapping.NoError()) {
+						exception.append("\nException for topic=").append(part.getTopic())
+								.append(" partition=").append(part.getPartition()).append(": ")
+								.append(ExceptionUtils.stringifyException(ErrorMapping.exceptionFor(code)));
+					}
+				}
+				if (++retries >= 3) {
+					throw new IOException("Unable to get last offset for partitions " + partitionStates + ": "
+							+ exception.toString());
+				} else {
+					LOG.warn("Unable to get last offset for partitions: Exception(s): {}", exception);
+				}
+			} else {
+				break; // leave retry loop
+			}
+		}
+		return response;
+	}
+
 	/**
 	 * Request offsets from Kafka with a specified set of partition's offset request information.
 	 * The returned offsets are used to set the internal partition states.
@@ -485,34 +565,8 @@ class SimpleConsumerThread<T> extends Thread {
 			SimpleConsumer consumer,
 			List<KafkaTopicPartitionState<TopicAndPartition>> partitionStates,
 			Map<TopicAndPartition, PartitionOffsetRequestInfo> partitionToRequestInfo) throws IOException {
-		int retries = 0;
-		OffsetResponse response;
-		while (true) {
-			kafka.javaapi.OffsetRequest request = new kafka.javaapi.OffsetRequest(
-				partitionToRequestInfo, kafka.api.OffsetRequest.CurrentVersion(), consumer.clientId());
-			response = consumer.getOffsetsBefore(request);
 
-			if (response.hasError()) {
-				StringBuilder exception = new StringBuilder();
-				for (KafkaTopicPartitionState<TopicAndPartition> part : partitionStates) {
-					short code;
-					if ((code = response.errorCode(part.getTopic(), part.getPartition())) != ErrorMapping.NoError()) {
-						exception.append("\nException for topic=").append(part.getTopic())
-							.append(" partition=").append(part.getPartition()).append(": ")
-							.append(ExceptionUtils.stringifyException(ErrorMapping.exceptionFor(code)));
-					}
-				}
-				if (++retries >= 3) {
-					throw new IOException("Unable to get last offset for partitions " + partitionStates + ": "
-						+ exception.toString());
-				} else {
-					LOG.warn("Unable to get last offset for partitions: Exception(s): {}", exception);
-				}
-			} else {
-				break; // leave retry loop
-			}
-		}
-
+		OffsetResponse response = getOffsetResponse(consumer, partitionStates, partitionToRequestInfo);
 		for (KafkaTopicPartitionState<TopicAndPartition> part: partitionStates) {
 			// there will be offsets only for partitions that were requested for
 			if (partitionToRequestInfo.containsKey(part.getKafkaPartitionHandle())) {

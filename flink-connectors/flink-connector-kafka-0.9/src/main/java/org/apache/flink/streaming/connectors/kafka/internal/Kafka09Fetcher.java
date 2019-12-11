@@ -1,13 +1,12 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,21 +18,21 @@
 package org.apache.flink.streaming.connectors.kafka.internal;
 
 import org.apache.flink.annotation.Internal;
-import org.apache.flink.api.common.io.ratelimiting.FlinkConnectorRateLimiter;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
 import org.apache.flink.streaming.api.functions.AssignerWithPunctuatedWatermarks;
 import org.apache.flink.streaming.api.functions.source.SourceFunction.SourceContext;
-import org.apache.flink.streaming.connectors.kafka.KafkaDeserializationSchema;
 import org.apache.flink.streaming.connectors.kafka.internals.AbstractFetcher;
 import org.apache.flink.streaming.connectors.kafka.internals.KafkaCommitCallback;
 import org.apache.flink.streaming.connectors.kafka.internals.KafkaTopicPartition;
 import org.apache.flink.streaming.connectors.kafka.internals.KafkaTopicPartitionState;
+import org.apache.flink.streaming.connectors.kafka.internals.KafkaTopicPartitionStateSentinel;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
+import org.apache.flink.streaming.util.serialization.KeyedDeserializationSchema;
 import org.apache.flink.util.SerializedValue;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
@@ -41,6 +40,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,7 +61,7 @@ public class Kafka09Fetcher<T> extends AbstractFetcher<T, TopicPartition> {
 	// ------------------------------------------------------------------------
 
 	/** The schema to convert between Kafka's byte messages, and Flink's objects. */
-	private final KafkaDeserializationSchema<T> deserializer;
+	private final KeyedDeserializationSchema<T> deserializer;
 
 	/** The handover of data and exceptions between the consumer thread and the task thread. */
 	private final Handover handover;
@@ -77,22 +77,23 @@ public class Kafka09Fetcher<T> extends AbstractFetcher<T, TopicPartition> {
 	public Kafka09Fetcher(
 			SourceContext<T> sourceContext,
 			Map<KafkaTopicPartition, Long> assignedPartitionsWithInitialOffsets,
+			Map<KafkaTopicPartition, Long> assignedPartitionsToEndOffsets,
 			SerializedValue<AssignerWithPeriodicWatermarks<T>> watermarksPeriodic,
 			SerializedValue<AssignerWithPunctuatedWatermarks<T>> watermarksPunctuated,
 			ProcessingTimeService processingTimeProvider,
 			long autoWatermarkInterval,
 			ClassLoader userCodeClassLoader,
 			String taskNameWithSubtasks,
-			KafkaDeserializationSchema<T> deserializer,
+			KeyedDeserializationSchema<T> deserializer,
 			Properties kafkaProperties,
 			long pollTimeout,
 			MetricGroup subtaskMetricGroup,
 			MetricGroup consumerMetricGroup,
-			boolean useMetrics,
-			FlinkConnectorRateLimiter rateLimiter) throws Exception {
+			boolean useMetrics) throws Exception {
 		super(
 				sourceContext,
 				assignedPartitionsWithInitialOffsets,
+				assignedPartitionsToEndOffsets,
 				watermarksPeriodic,
 				watermarksPunctuated,
 				processingTimeProvider,
@@ -114,36 +115,82 @@ public class Kafka09Fetcher<T> extends AbstractFetcher<T, TopicPartition> {
 				pollTimeout,
 				useMetrics,
 				consumerMetricGroup,
-				subtaskMetricGroup,
-				rateLimiter);
+				subtaskMetricGroup);
 	}
 
 	// ------------------------------------------------------------------------
 	//  Fetcher work methods
 	// ------------------------------------------------------------------------
 
+	public void requestAndSetLatestEndOffsetsFromKafka(
+			KafkaConsumer<byte[], byte[]> consumer,
+			KafkaConsumerCallBridge consumerCallBridge,
+			List<KafkaTopicPartitionState<TopicPartition>> partitions) throws Exception {
+
+		List<TopicPartition> topicPartitions = new ArrayList<>(partitions.size());
+
+		Map<TopicPartition, KafkaTopicPartitionState<TopicPartition>>
+			topicPartitionToKafkaTopicPartitionState = new HashMap<>();
+		for (KafkaTopicPartitionState<TopicPartition> partitionState : partitions) {
+			if (partitionState.getEndOffset() == KafkaTopicPartitionStateSentinel.LATEST_OFFSET) {
+				topicPartitions.add(partitionState.getKafkaPartitionHandle());
+				topicPartitionToKafkaTopicPartitionState.put(
+						partitionState.getKafkaPartitionHandle(), partitionState);
+			}
+		}
+
+		consumerCallBridge.assignPartitions(consumer, topicPartitions);
+		for (TopicPartition topicPartition : topicPartitions) {
+			consumerCallBridge.seekPartitionToEnd(consumer, topicPartition);
+			topicPartitionToKafkaTopicPartitionState.get(topicPartition)
+				.setEndOffset(consumer.position(topicPartition));
+		}
+	}
+
 	@Override
-	public void runFetchLoop() throws Exception {
+	public void runFetchLoop(boolean dynamicDiscoverEnabled) throws Exception {
 		try {
 			final Handover handover = this.handover;
+			if (subscribedPartitionStates().size() == 0 && !dynamicDiscoverEnabled) {
+				return;
+			}
 
+			KafkaConsumer<byte[], byte[]> consumer = consumerThread.getConsumer();
+			try {
+				requestAndSetLatestEndOffsetsFromKafka(consumer, createCallBridge(), subscribedPartitionStates());
+			} finally {
+				consumer.close();
+			}
 			// kick off the actual Kafka consumer
+			consumerThread.setDynamicDiscoverEnabled(dynamicDiscoverEnabled);
 			consumerThread.start();
 
 			while (running) {
 				// this blocks until we get the next records
 				// it automatically re-throws exceptions encountered in the consumer thread
-				final ConsumerRecords<byte[], byte[]> records = handover.pollNext();
+				Handover.ConsumerRecordsAndPositions records;
+				try {
+					records = handover.pollNext();
+				} catch (Handover.ClosedException e) {
+					break;
+				}
 
 				// get the records for each topic partition
+				int finished = 0;
 				for (KafkaTopicPartitionState<TopicPartition> partition : subscribedPartitionStates()) {
+
+					if (partition.isFinished()) {
+						finished++;
+						continue;
+					}
 
 					List<ConsumerRecord<byte[], byte[]>> partitionRecords =
 							records.records(partition.getKafkaPartitionHandle());
 
 					for (ConsumerRecord<byte[], byte[]> record : partitionRecords) {
-
-						final T value = deserializer.deserialize(record);
+						final T value = deserializer.deserialize(
+								record.key(), record.value(),
+								record.topic(), record.partition(), record.offset());
 
 						if (deserializer.isEndOfStream(value)) {
 							// end of stream signaled
@@ -154,7 +201,23 @@ public class Kafka09Fetcher<T> extends AbstractFetcher<T, TopicPartition> {
 						// emit the actual record. this also updates offset state atomically
 						// and deals with timestamps and watermark generation
 						emitRecord(value, partition, record.offset(), record);
+
+						if (record.offset() + 1 >= partition.getEndOffset()) {
+							partition.setFinished();
+							break;
+						}
 					}
+
+					// When transaction is enabled, the offset of the last record in a partition may not
+					// be the log end offset due to in-band transaction markers. So we explicitly check
+					// the consumer's position to see if the consumption should stop or not.
+					Long position = records.position(partition.getKafkaPartitionHandle());
+					if (position != null && position == partition.getEndOffset() && !partition.isFinished()) {
+						partition.setFinished();
+					}
+				}
+				if (!dynamicDiscoverEnabled && finished == subscribedPartitionStates().size()) {
+					break;
 				}
 			}
 		}
@@ -204,8 +267,8 @@ public class Kafka09Fetcher<T> extends AbstractFetcher<T, TopicPartition> {
 		return "Kafka 0.9 Fetcher";
 	}
 
-	protected KafkaConsumerCallBridge09 createCallBridge() {
-		return new KafkaConsumerCallBridge09();
+	protected KafkaConsumerCallBridge createCallBridge() {
+		return new KafkaConsumerCallBridge();
 	}
 
 	// ------------------------------------------------------------------------

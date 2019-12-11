@@ -20,6 +20,7 @@ package org.apache.flink.types;
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.util.StringUtils;
+import org.apache.flink.util.TimeConvertUtils;
 
 import java.io.Serializable;
 import java.util.Arrays;
@@ -90,7 +91,14 @@ public class Row implements Serializable{
 			if (i > 0) {
 				sb.append(",");
 			}
-			sb.append(StringUtils.arrayAwareToString(fields[i]));
+
+			if (fields[i] instanceof java.sql.Date
+				|| fields[i] instanceof java.sql.Time
+				|| fields[i] instanceof java.sql.Timestamp) {
+				sb.append(TimeConvertUtils.unixDateTimeToString(fields[i]));
+			} else {
+				sb.append(StringUtils.arrayAwareToString(fields[i]));
+			}
 		}
 		return sb.toString();
 	}
@@ -166,35 +174,5 @@ public class Row implements Serializable{
 			newRow.fields[i] = row.fields[fields[i]];
 		}
 		return newRow;
-	}
-
-	/**
-	 * Creates a new Row which fields are copied from the other rows.
-	 * This method does not perform a deep copy.
-	 *
-	 * @param first The first row being copied.
-	 * @param remainings The other rows being copied.
-	 * @return the joined new Row
-	 */
-	public static Row join(Row first, Row... remainings) {
-		int newLength = first.fields.length;
-		for (Row remaining : remainings) {
-			newLength += remaining.fields.length;
-		}
-
-		final Row joinedRow = new Row(newLength);
-		int index = 0;
-
-		// copy the first row
-		System.arraycopy(first.fields, 0, joinedRow.fields, index, first.fields.length);
-		index += first.fields.length;
-
-		// copy the remaining rows
-		for (Row remaining : remainings) {
-			System.arraycopy(remaining.fields, 0, joinedRow.fields, index, remaining.fields.length);
-			index += remaining.fields.length;
-		}
-
-		return joinedRow;
 	}
 }

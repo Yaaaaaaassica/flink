@@ -1,84 +1,90 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ *   Licensed to the Apache Software Foundation (ASF) under one
+ *   or more contributor license agreements.  See the NOTICE file
+ *   distributed with this work for additional information
+ *   regarding copyright ownership.  The ASF licenses this file
+ *   to you under the Apache License, Version 2.0 (the
+ *   "License"); you may not use this file except in compliance
+ *   with the License.  You may obtain a copy of the License at
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *   Unless required by applicable law or agreed to in writing, software
+ *   distributed under the License is distributed on an "AS IS" BASIS,
+ *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *   See the License for the specific language governing permissions and
+ *   limitations under the License.
  */
 
 import { NgModule } from '@angular/core';
 import { Routes, RouterModule } from '@angular/router';
-import { JobListComponent } from 'share/customize/job-list/job-list.component';
+import { JobListComponent } from 'flink-share/customize/job-list/job-list.component';
 import { JobCheckpointsComponent } from './checkpoints/job-checkpoints.component';
 import { JobConfigurationComponent } from './configuration/job-configuration.component';
 import { JobExceptionsComponent } from './exceptions/job-exceptions.component';
 import { JobComponent } from './job.component';
+import { JobPendingSlotsComponent } from './pending-slots/job-pending-slots.component';
 import { JobTimelineComponent } from './timeline/job-timeline.component';
 
 const routes: Routes = [
   {
-    path: 'running',
+    path     : 'running',
     component: JobListComponent,
-    data: {
-      title: 'Running Jobs',
+    data     : {
+      title    : 'Running Jobs',
       completed: false
     }
   },
   {
-    path: 'completed',
+    path     : 'completed',
     component: JobListComponent,
-    data: {
-      title: 'Completed Jobs',
+    data     : {
+      title    : 'Completed Jobs',
       completed: true
     }
   },
   {
-    path: ':jid',
+    path     : ':jid',
     component: JobComponent,
-    children: [
+    children : [
       {
-        path: 'overview',
+        path        : 'overview',
         loadChildren: './overview/job-overview.module#JobOverviewModule',
-        data: {
+        data        : {
           path: 'overview'
         }
       },
       {
-        path: 'timeline',
+        path     : 'timeline',
         component: JobTimelineComponent,
-        data: {
+        data     : {
           path: 'timeline'
         }
       },
       {
-        path: 'exceptions',
+        path     : 'exceptions',
         component: JobExceptionsComponent,
-        data: {
+        data     : {
           path: 'exceptions'
         }
       },
       {
-        path: 'checkpoints',
+        path     : 'checkpoints',
         component: JobCheckpointsComponent,
-        data: {
+        data     : {
           path: 'checkpoints'
         }
       },
       {
-        path: 'configuration',
+        path     : 'configuration',
         component: JobConfigurationComponent,
-        data: {
+        data     : {
           path: 'configuration'
+        }
+      },
+      {
+        path     : 'pending-slots',
+        component: JobPendingSlotsComponent,
+        data     : {
+          path: 'pending-slots'
         }
       },
       { path: '**', redirectTo: 'overview', pathMatch: 'full' }
@@ -87,7 +93,8 @@ const routes: Routes = [
 ];
 
 @NgModule({
-  imports: [RouterModule.forChild(routes)],
-  exports: [RouterModule]
+  imports: [ RouterModule.forChild(routes) ],
+  exports: [ RouterModule ]
 })
-export class JobRoutingModule {}
+export class JobRoutingModule {
+}

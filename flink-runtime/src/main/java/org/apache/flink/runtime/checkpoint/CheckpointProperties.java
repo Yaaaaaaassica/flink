@@ -176,16 +176,7 @@ public class CheckpointProperties implements Serializable {
 	 * @return <code>true</code> if the properties describe a savepoint, <code>false</code> otherwise.
 	 */
 	public boolean isSavepoint() {
-		return checkpointType.isSavepoint();
-	}
-
-	/**
-	 * Returns whether the checkpoint properties describe a synchronous savepoint/checkpoint.
-	 *
-	 * @return <code>true</code> if the properties describe a synchronous operation, <code>false</code> otherwise.
-	 */
-	public boolean isSynchronous() {
-		return checkpointType.isSynchronous();
+		return checkpointType == CheckpointType.SAVEPOINT;
 	}
 
 	// ------------------------------------------------------------------------
@@ -239,15 +230,6 @@ public class CheckpointProperties implements Serializable {
 	//  Factories and pre-configured properties
 	// ------------------------------------------------------------------------
 
-	private static final CheckpointProperties SYNC_SAVEPOINT = new CheckpointProperties(
-			true,
-			CheckpointType.SYNC_SAVEPOINT,
-			false,
-			false,
-			false,
-			false,
-			false);
-
 	private static final CheckpointProperties SAVEPOINT = new CheckpointProperties(
 			true,
 			CheckpointType.SAVEPOINT,
@@ -295,10 +277,6 @@ public class CheckpointProperties implements Serializable {
 	 */
 	public static CheckpointProperties forSavepoint() {
 		return SAVEPOINT;
-	}
-
-	public static CheckpointProperties forSyncSavepoint() {
-		return SYNC_SAVEPOINT;
 	}
 
 	/**

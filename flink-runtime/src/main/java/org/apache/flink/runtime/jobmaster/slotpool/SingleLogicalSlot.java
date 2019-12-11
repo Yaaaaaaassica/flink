@@ -20,6 +20,7 @@ package org.apache.flink.runtime.jobmaster.slotpool;
 
 import org.apache.flink.runtime.clusterframework.types.AllocationID;
 import org.apache.flink.runtime.instance.SlotSharingGroupId;
+import org.apache.flink.runtime.jobmanager.scheduler.CoLocationConstraint;
 import org.apache.flink.runtime.jobmanager.scheduler.Locality;
 import org.apache.flink.runtime.jobmanager.slots.TaskManagerGateway;
 import org.apache.flink.runtime.jobmaster.LogicalSlot;
@@ -33,11 +34,12 @@ import javax.annotation.Nullable;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
+import java.util.function.Function;
 
 /**
- * Implementation of the {@link LogicalSlot} which is used by the {@link SlotPoolImpl}.
+ * Implementation of the {@link LogicalSlot} which is used by the {@link SlotPool}.
  */
-public class SingleLogicalSlot implements LogicalSlot, PhysicalSlot.Payload {
+public class SingleLogicalSlot implements LogicalSlot, AllocatedSlot.Payload {
 
 	private static final AtomicReferenceFieldUpdater<SingleLogicalSlot, Payload> PAYLOAD_UPDATER = AtomicReferenceFieldUpdater.newUpdater(
 		SingleLogicalSlot.class,
@@ -57,6 +59,10 @@ public class SingleLogicalSlot implements LogicalSlot, PhysicalSlot.Payload {
 	@Nullable
 	private final SlotSharingGroupId slotSharingGroupId;
 
+	// null if the logical slot does not have to a co location constraint, otherwise non-null
+	@Nullable
+	private final CoLocationConstraint coLocationConstraint;
+
 	// locality of this slot wrt the requested preferred locations
 	private final Locality locality;
 
@@ -74,11 +80,13 @@ public class SingleLogicalSlot implements LogicalSlot, PhysicalSlot.Payload {
 			SlotRequestId slotRequestId,
 			SlotContext slotContext,
 			@Nullable SlotSharingGroupId slotSharingGroupId,
+			@Nullable CoLocationConstraint coLocationConstraint,
 			Locality locality,
 			SlotOwner slotOwner) {
 		this.slotRequestId = Preconditions.checkNotNull(slotRequestId);
 		this.slotContext = Preconditions.checkNotNull(slotContext);
 		this.slotSharingGroupId = slotSharingGroupId;
+		this.coLocationConstraint = coLocationConstraint;
 		this.locality = Preconditions.checkNotNull(locality);
 		this.slotOwner = Preconditions.checkNotNull(slotOwner);
 		this.releaseFuture = new CompletableFuture<>();
@@ -121,8 +129,8 @@ public class SingleLogicalSlot implements LogicalSlot, PhysicalSlot.Payload {
 	@Override
 	public CompletableFuture<?> releaseSlot(@Nullable Throwable cause) {
 		if (STATE_UPDATER.compareAndSet(this, State.ALIVE, State.RELEASING)) {
-			signalPayloadRelease(cause);
-			returnSlotToOwner(payload.getTerminalStateFuture());
+			final CompletableFuture<?> payloadTerminalStateFuture = signalPayloadRelease(cause);
+			returnSlotToOwner(payloadTerminalStateFuture);
 		}
 
 		return releaseFuture;
@@ -149,6 +157,12 @@ public class SingleLogicalSlot implements LogicalSlot, PhysicalSlot.Payload {
 		return slotSharingGroupId;
 	}
 
+	@Nullable
+	@Override
+	public CoLocationConstraint getCoLocationConstraint() {
+		return coLocationConstraint;
+	}
+
 	// -------------------------------------------------------------------------
 	// AllocatedSlot.Payload implementation
 	// -------------------------------------------------------------------------
@@ -168,19 +182,24 @@ public class SingleLogicalSlot implements LogicalSlot, PhysicalSlot.Payload {
 		releaseFuture.complete(null);
 	}
 
-	private void signalPayloadRelease(Throwable cause) {
+	private CompletableFuture<?> signalPayloadRelease(Throwable cause) {
 		tryAssignPayload(TERMINATED_PAYLOAD);
 		payload.fail(cause);
+
+		return payload.getTerminalStateFuture();
 	}
 
 	private void returnSlotToOwner(CompletableFuture<?> terminalStateFuture) {
-		terminalStateFuture
-			.whenComplete((Object ignored, Throwable throwable) -> {
+		final CompletableFuture<Boolean> slotReturnFuture = terminalStateFuture.handle((Object ignored, Throwable throwable) -> {
+			if (state == State.RELEASING) {
+				return slotOwner.returnAllocatedSlot(this);
+			} else {
+				return CompletableFuture.completedFuture(true);
+			}
+		}).thenCompose(Function.identity());
 
-				if (state == State.RELEASING) {
-					slotOwner.returnLogicalSlot(this);
-				}
-
+		slotReturnFuture.whenComplete(
+			(Object ignored, Throwable throwable) -> {
 				markReleased();
 
 				if (throwable != null) {
@@ -203,16 +222,5 @@ public class SingleLogicalSlot implements LogicalSlot, PhysicalSlot.Payload {
 		ALIVE,
 		RELEASING,
 		RELEASED
-	}
-
-
-	@Override
-	public String toString() {
-		return "SingleLogicalSlot{" +
-			"slotRequestId=" + slotRequestId +
-			", slotContext=" + slotContext +
-			", slotSharingGroupId=" + slotSharingGroupId +
-			", locality=" + locality +
-			'}';
 	}
 }

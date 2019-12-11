@@ -19,10 +19,11 @@
 package org.apache.flink.runtime.io.network.netty;
 
 import org.apache.flink.runtime.io.network.NetworkSequenceViewReader;
-import org.apache.flink.runtime.io.network.TaskEventPublisher;
+import org.apache.flink.runtime.io.network.TaskEventDispatcher;
 import org.apache.flink.runtime.io.network.netty.NettyMessage.AddCredit;
 import org.apache.flink.runtime.io.network.netty.NettyMessage.CancelPartitionRequest;
 import org.apache.flink.runtime.io.network.netty.NettyMessage.CloseRequest;
+import org.apache.flink.runtime.io.network.partition.DataConsumptionException;
 import org.apache.flink.runtime.io.network.partition.PartitionNotFoundException;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionProvider;
 import org.apache.flink.runtime.io.network.partition.consumer.InputChannelID;
@@ -45,7 +46,7 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
 
 	private final ResultPartitionProvider partitionProvider;
 
-	private final TaskEventPublisher taskEventPublisher;
+	private final TaskEventDispatcher taskEventDispatcher;
 
 	private final PartitionRequestQueue outboundQueue;
 
@@ -53,12 +54,12 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
 
 	PartitionRequestServerHandler(
 		ResultPartitionProvider partitionProvider,
-		TaskEventPublisher taskEventPublisher,
+		TaskEventDispatcher taskEventDispatcher,
 		PartitionRequestQueue outboundQueue,
 		boolean creditBasedEnabled) {
 
 		this.partitionProvider = partitionProvider;
-		this.taskEventPublisher = taskEventPublisher;
+		this.taskEventDispatcher = taskEventDispatcher;
 		this.outboundQueue = outboundQueue;
 		this.creditBasedEnabled = creditBasedEnabled;
 	}
@@ -86,6 +87,12 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
 
 				LOG.debug("Read channel on {}: {}.", ctx.channel().localAddress(), request);
 
+				// If the partition request arrives later than cancel request during downstream failover, we should
+				// ignore this partition request, otherwise the resources may be leaked for external shuffle mode.
+				if (outboundQueue.isMarkedReleased(request.receiverId)) {
+					return;
+				}
+
 				try {
 					NetworkSequenceViewReader reader;
 					if (creditBasedEnabled) {
@@ -107,6 +114,9 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
 					outboundQueue.notifyReaderCreated(reader);
 				} catch (PartitionNotFoundException notFound) {
 					respondWithError(ctx, notFound, request.receiverId);
+				} catch (Throwable t) {
+					// Mark all unexpected request partition errors as DataConsumptionException.
+					respondWithError(ctx, new DataConsumptionException(request.partitionId, t), request.receiverId);
 				}
 			}
 			// ----------------------------------------------------------------
@@ -115,7 +125,7 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
 			else if (msgClazz == TaskEventRequest.class) {
 				TaskEventRequest request = (TaskEventRequest) msg;
 
-				if (!taskEventPublisher.publish(request.partitionId, request.event)) {
+				if (!taskEventDispatcher.publish(request.partitionId, request.event)) {
 					respondWithError(ctx, new IllegalArgumentException("Task event receiver not found."), request.receiverId);
 				}
 			} else if (msgClazz == CancelPartitionRequest.class) {

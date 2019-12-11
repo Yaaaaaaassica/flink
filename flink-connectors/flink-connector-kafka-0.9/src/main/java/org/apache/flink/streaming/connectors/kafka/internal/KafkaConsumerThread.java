@@ -20,7 +20,6 @@ package org.apache.flink.streaming.connectors.kafka.internal;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.VisibleForTesting;
-import org.apache.flink.api.common.io.ratelimiting.FlinkConnectorRateLimiter;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.streaming.connectors.kafka.internals.ClosableBlockingQueue;
@@ -29,11 +28,11 @@ import org.apache.flink.streaming.connectors.kafka.internals.KafkaTopicPartition
 import org.apache.flink.streaming.connectors.kafka.internals.KafkaTopicPartitionStateSentinel;
 import org.apache.flink.streaming.connectors.kafka.internals.metrics.KafkaMetricWrapper;
 
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.OffsetCommitCallback;
+import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Metric;
 import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.TopicPartition;
@@ -43,6 +42,7 @@ import org.slf4j.Logger;
 import javax.annotation.Nonnull;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -83,7 +83,7 @@ public class KafkaConsumerThread extends Thread {
 	private final ClosableBlockingQueue<KafkaTopicPartitionState<TopicPartition>> unassignedPartitionsQueue;
 
 	/** The indirections on KafkaConsumer methods, for cases where KafkaConsumer compatibility is broken. */
-	private final KafkaConsumerCallBridge09 consumerCallBridge;
+	private final KafkaConsumerCallBridge consumerCallBridge;
 
 	/** The maximum number of milliseconds to wait for a fetch batch. */
 	private final long pollTimeout;
@@ -122,21 +122,21 @@ public class KafkaConsumerThread extends Thread {
 	/** Flag tracking whether the latest commit request has completed. */
 	private volatile boolean commitInProgress;
 
-	/** Ratelimiter. */
-	private FlinkConnectorRateLimiter rateLimiter;
+	private volatile boolean dynamicDiscoverEnabled = true;
+
+	private Map<TopicPartition, KafkaTopicPartitionState<TopicPartition>> currentPartitions = new HashMap<>();
 
 	public KafkaConsumerThread(
 			Logger log,
 			Handover handover,
 			Properties kafkaProperties,
 			ClosableBlockingQueue<KafkaTopicPartitionState<TopicPartition>> unassignedPartitionsQueue,
-			KafkaConsumerCallBridge09 consumerCallBridge,
+			KafkaConsumerCallBridge consumerCallBridge,
 			String threadName,
 			long pollTimeout,
 			boolean useMetrics,
 			MetricGroup consumerMetricGroup,
-			MetricGroup subtaskMetricGroup,
-			FlinkConnectorRateLimiter rateLimiter) {
+			MetricGroup subtaskMetricGroup) {
 
 		super(threadName);
 		setDaemon(true);
@@ -156,13 +156,13 @@ public class KafkaConsumerThread extends Thread {
 		this.consumerReassignmentLock = new Object();
 		this.nextOffsetsToCommit = new AtomicReference<>();
 		this.running = true;
-
-		if (rateLimiter != null) {
-			this.rateLimiter = rateLimiter;
-		}
 	}
 
 	// ------------------------------------------------------------------------
+
+	public void setDynamicDiscoverEnabled(boolean dynamicDiscoverEnabled) {
+		this.dynamicDiscoverEnabled = dynamicDiscoverEnabled;
+	}
 
 	@Override
 	public void run() {
@@ -178,7 +178,7 @@ public class KafkaConsumerThread extends Thread {
 		// This is important, because the consumer has multi-threading issues,
 		// including concurrent 'close()' calls.
 		try {
-			this.consumer = getConsumer(kafkaProperties);
+			this.consumer = getConsumer();
 		}
 		catch (Throwable t) {
 			handover.reportError(t);
@@ -218,6 +218,7 @@ public class KafkaConsumerThread extends Thread {
 			// found partitions are not carried across loops using this variable;
 			// they are carried across via re-adding them to the unassigned partitions queue
 			List<KafkaTopicPartitionState<TopicPartition>> newPartitions;
+			boolean reAssignedFailed = false;
 
 			// main fetch loop
 			while (running) {
@@ -238,6 +239,10 @@ public class KafkaConsumerThread extends Thread {
 					}
 				}
 
+				if (currentPartitions == null && !unassignedPartitionsQueue.isOpen()) {
+					break;
+				}
+
 				try {
 					if (hasAssignedPartitions) {
 						newPartitions = unassignedPartitionsQueue.pollBatch();
@@ -250,9 +255,30 @@ public class KafkaConsumerThread extends Thread {
 						newPartitions = unassignedPartitionsQueue.getBatchBlocking();
 					}
 					if (newPartitions != null) {
-						reassignPartitions(newPartitions);
+						for (KafkaTopicPartitionState<TopicPartition> partition: newPartitions) {
+							currentPartitions.put(partition.getKafkaPartitionHandle(), partition);
+						}
+						reassignPartitions();
 					}
+
+					for (KafkaTopicPartitionState<TopicPartition> partitionState: currentPartitions.values()) {
+						if (partitionState.isFinished()) {
+							reassignPartitions();
+							break;
+						}
+					}
+
+					if (reAssignedFailed) {
+						reassignPartitions();
+						reAssignedFailed = false;
+					}
+
+					if (currentPartitions.size() == 0 && !dynamicDiscoverEnabled) {
+						break;
+					}
+
 				} catch (AbortedReassignmentException e) {
+					reAssignedFailed = true;
 					continue;
 				}
 
@@ -264,7 +290,7 @@ public class KafkaConsumerThread extends Thread {
 				// get the next batch of records, unless we did not manage to hand the old batch over
 				if (records == null) {
 					try {
-						records = getRecordsFromKafka();
+						records = consumer.poll(pollTimeout);
 					}
 					catch (WakeupException we) {
 						continue;
@@ -272,7 +298,13 @@ public class KafkaConsumerThread extends Thread {
 				}
 
 				try {
-					handover.produce(records);
+					Map<TopicPartition, Long> positions = new HashMap<>(records.partitions().size());
+					// When there are records returned, only give the positions of the partitions that
+					// has records returned, otherwise, return all the positions.
+					Collection<TopicPartition> partitionsToReportOffsets =
+						records.isEmpty() ? consumer.assignment() : records.partitions();
+					partitionsToReportOffsets.forEach(tp -> positions.put(tp, consumer.position(tp)));
+					handover.produce(records, positions);
 					records = null;
 				}
 				catch (Handover.WakeupException e) {
@@ -291,14 +323,11 @@ public class KafkaConsumerThread extends Thread {
 			// make sure the handover is closed if it is not already closed or has an error
 			handover.close();
 
-			// If a ratelimiter was created, make sure it's closed.
-			if (rateLimiter != null) {
-				rateLimiter.close();
-			}
-
 			// make sure the KafkaConsumer is closed
 			try {
-				consumer.close();
+				if (consumer != null) {
+					consumer.close();
+				}
 			}
 			catch (Throwable t) {
 				log.warn("Error while closing Kafka consumer", t);
@@ -330,11 +359,6 @@ public class KafkaConsumerThread extends Thread {
 				// set this flag so that the wakeup state is restored once the reassignment is complete
 				hasBufferedWakeup = true;
 			}
-		}
-
-		// If a ratelimiter was created, make sure it's closed.
-		if (rateLimiter != null) {
-			rateLimiter.close();
 		}
 	}
 
@@ -394,10 +418,7 @@ public class KafkaConsumerThread extends Thread {
 	 * <p>This method is exposed for testing purposes.
 	 */
 	@VisibleForTesting
-	void reassignPartitions(List<KafkaTopicPartitionState<TopicPartition>> newPartitions) throws Exception {
-		if (newPartitions.size() == 0) {
-			return;
-		}
+	void reassignPartitions() throws Exception {
 		hasAssignedPartitions = true;
 		boolean reassignmentStarted = false;
 
@@ -417,9 +438,32 @@ public class KafkaConsumerThread extends Thread {
 			}
 
 			final List<TopicPartition> newPartitionAssignments =
-				new ArrayList<>(newPartitions.size() + oldPartitionAssignmentsToPosition.size());
-			newPartitionAssignments.addAll(oldPartitionAssignmentsToPosition.keySet());
-			newPartitionAssignments.addAll(convertKafkaPartitions(newPartitions));
+				new ArrayList<>(currentPartitions.size());
+
+			final List<KafkaTopicPartitionState<TopicPartition>> newPartitions = new ArrayList<>();
+
+			List<TopicPartition> finishedTopic = new ArrayList<>();
+
+			for (TopicPartition topicPartition : currentPartitions.keySet()) {
+				if (!oldPartitionAssignmentsToPosition.containsKey(topicPartition)) {
+					newPartitions.add(currentPartitions.get(topicPartition));
+					newPartitionAssignments.add(topicPartition);
+				} else if (currentPartitions.get(topicPartition).isFinished()) {
+					oldPartitionAssignmentsToPosition.remove(topicPartition);
+					finishedTopic.add(topicPartition);
+				} else {
+					newPartitionAssignments.add(topicPartition);
+				}
+			}
+
+			for (TopicPartition topicPartition : finishedTopic) {
+				currentPartitions.remove(topicPartition);
+			}
+
+			if (currentPartitions.isEmpty()) {
+				// all partition finished.
+				return;
+			}
 
 			// reassign with the new partitions
 			consumerCallBridge.assignPartitions(consumerTmp, newPartitionAssignments);
@@ -475,11 +519,6 @@ public class KafkaConsumerThread extends Thread {
 				// since only the last wakeup call is effective anyways
 				hasBufferedWakeup = false;
 
-				// re-add all new partitions back to the unassigned partitions queue to be picked up again
-				for (KafkaTopicPartitionState<TopicPartition> newPartition : newPartitions) {
-					unassignedPartitionsQueue.add(newPartition);
-				}
-
 				// this signals the main fetch loop to continue through the loop
 				throw new AbortedReassignmentException();
 			}
@@ -497,59 +536,29 @@ public class KafkaConsumerThread extends Thread {
 		}
 	}
 
-	@VisibleForTesting
-	KafkaConsumer<byte[], byte[]> getConsumer(Properties kafkaProperties) {
-		return new KafkaConsumer<>(kafkaProperties);
+	public KafkaConsumer<byte[], byte[]> getConsumer() {
+		return createKafkaConsumer(kafkaProperties);
 	}
 
-	@VisibleForTesting
-	FlinkConnectorRateLimiter getRateLimiter() {
-		return rateLimiter;
-	}
-
-	// -----------------------------------------------------------------------
-	// Rate limiting methods
-	// -----------------------------------------------------------------------
-
-	/**
-	 *
-	 * @param records List of ConsumerRecords.
-	 * @return Total batch size in bytes, including key and value.
-	 */
-	private int getRecordBatchSize(ConsumerRecords<byte[], byte[]> records) {
-		int recordBatchSizeBytes = 0;
-		for (ConsumerRecord<byte[], byte[]> record: records) {
-			// Null is an allowed value for the key
-			if (record.key() != null) {
-				recordBatchSizeBytes += record.key().length;
+	private KafkaConsumer createKafkaConsumer(Properties kafkaProperties) {
+		try {
+			return new KafkaConsumer<>(kafkaProperties);
+		} catch (KafkaException e) {
+			ClassLoader original = Thread.currentThread().getContextClassLoader();
+			try {
+				Thread.currentThread().setContextClassLoader(null);
+				return new KafkaConsumer<>(kafkaProperties);
+			} finally {
+				Thread.currentThread().setContextClassLoader(original);
 			}
-			recordBatchSizeBytes += record.value().length;
-
 		}
-		return recordBatchSizeBytes;
 	}
-
-	/**
-	 * Get records from Kafka. If the rate-limiting feature is turned on, this method is called at
-	 * a rate specified by the {@link #rateLimiter}.
-	 * @return ConsumerRecords
-	 */
-	@VisibleForTesting
-	protected ConsumerRecords<byte[], byte[]> getRecordsFromKafka() {
-		ConsumerRecords<byte[], byte[]> records = consumer.poll(pollTimeout);
-		if (rateLimiter != null) {
-			int bytesRead = getRecordBatchSize(records);
-			rateLimiter.acquire(bytesRead);
-		}
-		return records;
-	}
-
 
 	// ------------------------------------------------------------------------
 	//  Utilities
 	// ------------------------------------------------------------------------
 
-	private static List<TopicPartition> convertKafkaPartitions(List<KafkaTopicPartitionState<TopicPartition>> partitions) {
+	private static List<TopicPartition> convertKafkaPartitions(Collection<KafkaTopicPartitionState<TopicPartition>> partitions) {
 		ArrayList<TopicPartition> result = new ArrayList<>(partitions.size());
 		for (KafkaTopicPartitionState<TopicPartition> p : partitions) {
 			result.add(p.getKafkaPartitionHandle());
@@ -585,4 +594,10 @@ public class KafkaConsumerThread extends Thread {
 	private static class AbortedReassignmentException extends Exception {
 		private static final long serialVersionUID = 1L;
 	}
+
+	@VisibleForTesting
+	public Map<TopicPartition, KafkaTopicPartitionState<TopicPartition>> getCurrentPartitions() {
+		return currentPartitions;
+	}
+
 }

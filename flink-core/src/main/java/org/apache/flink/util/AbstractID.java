@@ -20,6 +20,8 @@ package org.apache.flink.util;
 
 import org.apache.flink.annotation.PublicEvolving;
 
+import javax.xml.bind.DatatypeConverter;
+
 import java.util.Random;
 
 /**
@@ -47,7 +49,7 @@ public class AbstractID implements Comparable<AbstractID>, java.io.Serializable 
 	protected final long lowerPart;
 
 	/** The memoized value returned by toString(). */
-	private transient String hexString;
+	private String toString;
 
 	// --------------------------------------------------------------------------------------------
 
@@ -95,6 +97,10 @@ public class AbstractID implements Comparable<AbstractID>, java.io.Serializable 
 		this.upperPart = RND.nextLong();
 	}
 
+	public static AbstractID fromHexString(String hexString) {
+		return new AbstractID(DatatypeConverter.parseHexBinary(hexString));
+	}
+
 	// --------------------------------------------------------------------------------------------
 
 	/**
@@ -127,22 +133,6 @@ public class AbstractID implements Comparable<AbstractID>, java.io.Serializable 
 		return bytes;
 	}
 
-	/**
-	 * Returns pure String representation of the ID in hexadecimal. This method should be used to construct things like
-	 * paths etc., that require a stable representation and is therefore final.
-	 */
-	public final String toHexString() {
-		if (this.hexString == null) {
-			final byte[] ba = new byte[SIZE];
-			longToByteArray(this.lowerPart, ba, 0);
-			longToByteArray(this.upperPart, ba, SIZE_OF_LONG);
-
-			this.hexString = StringUtils.byteToHexString(ba);
-		}
-
-		return this.hexString;
-	}
-
 	// --------------------------------------------------------------------------------------------
 	//  Standard Utilities
 	// --------------------------------------------------------------------------------------------
@@ -169,7 +159,15 @@ public class AbstractID implements Comparable<AbstractID>, java.io.Serializable 
 
 	@Override
 	public String toString() {
-		return toHexString();
+		if (this.toString == null) {
+			final byte[] ba = new byte[SIZE];
+			longToByteArray(this.lowerPart, ba, 0);
+			longToByteArray(this.upperPart, ba, SIZE_OF_LONG);
+
+			this.toString = StringUtils.byteToHexString(ba);
+		}
+
+		return this.toString;
 	}
 
 	@Override

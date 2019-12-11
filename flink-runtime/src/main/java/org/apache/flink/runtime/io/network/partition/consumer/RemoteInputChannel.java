@@ -20,29 +20,27 @@ package org.apache.flink.runtime.io.network.partition.consumer;
 
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.core.memory.MemorySegment;
-import org.apache.flink.core.memory.MemorySegmentProvider;
 import org.apache.flink.runtime.event.TaskEvent;
 import org.apache.flink.runtime.io.network.ConnectionID;
 import org.apache.flink.runtime.io.network.ConnectionManager;
-import org.apache.flink.runtime.io.network.PartitionRequestClient;
 import org.apache.flink.runtime.io.network.buffer.Buffer;
 import org.apache.flink.runtime.io.network.buffer.BufferListener;
 import org.apache.flink.runtime.io.network.buffer.BufferProvider;
 import org.apache.flink.runtime.io.network.buffer.BufferRecycler;
 import org.apache.flink.runtime.io.network.buffer.NetworkBuffer;
-import org.apache.flink.runtime.io.network.metrics.InputChannelMetrics;
+import org.apache.flink.runtime.io.network.netty.PartitionRequestClient;
+import org.apache.flink.runtime.io.network.partition.DataConsumptionException;
 import org.apache.flink.runtime.io.network.partition.PartitionNotFoundException;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionID;
+import org.apache.flink.runtime.metrics.groups.TaskIOMetricGroup;
 import org.apache.flink.util.ExceptionUtils;
 
-import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
 
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -82,6 +80,9 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	/** Client to establish a (possibly shared) TCP connection and request the partition. */
 	private volatile PartitionRequestClient partitionRequestClient;
 
+	/** A lock to synchronize partition request client initialization. */
+	private final Object partitionRequestLock = new Object();
+
 	/**
 	 * The next expected sequence number for the next buffer. This is modified by the network
 	 * I/O thread only.
@@ -105,9 +106,16 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	@GuardedBy("bufferQueue")
 	private boolean isWaitingForFloatingBuffers;
 
-	/** Global memory segment provider to request and recycle exclusive buffers (only for credit-based). */
-	@Nonnull
-	private final MemorySegmentProvider memorySegmentProvider;
+	public RemoteInputChannel(
+		SingleInputGate inputGate,
+		int channelIndex,
+		ResultPartitionID partitionId,
+		ConnectionID connectionId,
+		ConnectionManager connectionManager,
+		TaskIOMetricGroup metrics) {
+
+		this(inputGate, channelIndex, partitionId, connectionId, connectionManager, 0, 0, metrics);
+	}
 
 	public RemoteInputChannel(
 		SingleInputGate inputGate,
@@ -117,30 +125,47 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 		ConnectionManager connectionManager,
 		int initialBackOff,
 		int maxBackoff,
-		InputChannelMetrics metrics,
-		@Nonnull MemorySegmentProvider memorySegmentProvider) {
+		TaskIOMetricGroup metrics) {
 
-		super(inputGate, channelIndex, partitionId, initialBackOff, maxBackoff,
-			metrics.getNumBytesInRemoteCounter(), metrics.getNumBuffersInRemoteCounter());
+		super(inputGate, channelIndex, partitionId, initialBackOff, maxBackoff, metrics.getNumBytesInRemoteCounter());
 
 		this.connectionId = checkNotNull(connectionId);
 		this.connectionManager = checkNotNull(connectionManager);
-		this.memorySegmentProvider = memorySegmentProvider;
+
+		inputGate.runAsync(new Runnable() {
+			@Override
+			public void run() {
+				createPartitionRequestClient();
+			}
+		});
+	}
+
+	private void createPartitionRequestClient() {
+		synchronized (partitionRequestLock) {
+			if (partitionRequestClient == null) {
+				try {
+					partitionRequestClient = connectionManager.createPartitionRequestClient(connectionId);
+				} catch (Throwable t) {
+					setError(new DataConsumptionException(partitionId, t));
+				}
+			}
+		}
 	}
 
 	/**
 	 * Assigns exclusive buffers to this input channel, and this method should be called only once
 	 * after this input channel is created.
 	 */
-	void assignExclusiveSegments() throws IOException {
-		checkState(initialCredit == 0, "Bug in input channel setup logic: exclusive buffers have " +
+	@VisibleForTesting
+	public void assignExclusiveSegments(List<MemorySegment> segments) {
+		checkState(this.initialCredit == 0, "Bug in input channel setup logic: exclusive buffers have " +
 			"already been set for this input channel.");
 
-		Collection<MemorySegment> segments = checkNotNull(memorySegmentProvider.requestMemorySegments());
-		checkArgument(!segments.isEmpty(), "The number of exclusive buffers per channel should be larger than 0.");
+		checkNotNull(segments);
+		checkArgument(segments.size() > 0, "The number of exclusive buffers per channel should be larger than 0.");
 
-		initialCredit = segments.size();
-		numRequiredBuffers = segments.size();
+		this.initialCredit = segments.size();
+		this.numRequiredBuffers = segments.size();
 
 		synchronized (bufferQueue) {
 			for (MemorySegment segment : segments) {
@@ -159,24 +184,21 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	@VisibleForTesting
 	@Override
 	public void requestSubpartition(int subpartitionIndex) throws IOException, InterruptedException {
+		// initialize partitionRequestClient if not initialized yet
 		if (partitionRequestClient == null) {
-			// Create a client and request the partition
-			try {
-				partitionRequestClient = connectionManager.createPartitionRequestClient(connectionId);
-			} catch (IOException e) {
-				// IOExceptions indicate that we could not open a connection to the remote TaskExecutor
-				throw new PartitionConnectionException(partitionId, e);
-			}
-
-			partitionRequestClient.requestSubpartition(partitionId, subpartitionIndex, this, 0);
+			createPartitionRequestClient();
+			// throw exception when errors occur
+			checkError();
 		}
+
+		partitionRequestClient.requestSubpartition(partitionId, subpartitionIndex, this, 0);
 	}
 
 	/**
 	 * Retriggers a remote subpartition request.
 	 */
-	void retriggerSubpartitionRequest(int subpartitionIndex) throws IOException {
-		checkState(partitionRequestClient != null, "Missing initial subpartition request.");
+	void retriggerSubpartitionRequest(int subpartitionIndex) throws IOException, InterruptedException {
+		checkState(partitionRequestClient != null, "Partition request client initialization failed.");
 
 		if (increaseBackoff()) {
 			partitionRequestClient.requestSubpartition(
@@ -194,16 +216,15 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 		checkError();
 
 		final Buffer next;
-		final boolean moreAvailable;
+		final int remaining;
 
 		synchronized (receivedBuffers) {
 			next = receivedBuffers.poll();
-			moreAvailable = !receivedBuffers.isEmpty();
+			remaining = receivedBuffers.size();
 		}
 
-		numBytesIn.inc(next.getSize());
-		numBuffersIn.inc();
-		return Optional.of(new BufferAndAvailability(next, moreAvailable, getSenderBacklog()));
+		numBytesIn.inc(next.getSizeUnsafe());
+		return Optional.of(new BufferAndAvailability(next, remaining > 0, getSenderBacklog()));
 	}
 
 	// ------------------------------------------------------------------------
@@ -227,6 +248,11 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	@Override
 	public boolean isReleased() {
 		return isReleased.get();
+	}
+
+	@Override
+	void notifySubpartitionConsumed() {
+		// Nothing to do
 	}
 
 	/**
@@ -255,7 +281,7 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 			}
 
 			if (exclusiveRecyclingSegments.size() > 0) {
-				memorySegmentProvider.recycleMemorySegments(exclusiveRecyclingSegments);
+				inputGate.returnExclusiveSegments(exclusiveRecyclingSegments);
 			}
 
 			// The released flag has to be set before closing the connection to ensure that
@@ -269,7 +295,7 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	}
 
 	private void failPartitionRequest() {
-		setError(new PartitionNotFoundException(partitionId));
+		setError(new DataConsumptionException(partitionId, new PartitionNotFoundException(partitionId)));
 	}
 
 	@Override
@@ -287,7 +313,10 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	private void notifyCreditAvailable() {
 		checkState(partitionRequestClient != null, "Tried to send task event to producer before requesting a queue.");
 
-		partitionRequestClient.notifyCreditAvailable(this);
+		// We should skip the notification if this channel is already released.
+		if (!isReleased.get()) {
+			partitionRequestClient.notifyCreditAvailable(this);
+		}
 	}
 
 	/**
@@ -301,11 +330,11 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 		int numAddedBuffers;
 
 		synchronized (bufferQueue) {
-			// Similar to notifyBufferAvailable(), make sure that we never add a buffer
-			// after releaseAllResources() released all buffers (see below for details).
+			// Important: check the isReleased state inside synchronized block, so there is no
+			// race condition when recycle and releaseAllResources running in parallel.
 			if (isReleased.get()) {
 				try {
-					memorySegmentProvider.recycleMemorySegments(Collections.singletonList(segment));
+					inputGate.returnExclusiveSegments(Collections.singletonList(segment));
 					return;
 				} catch (Throwable t) {
 					ExceptionUtils.rethrow(t);
@@ -340,7 +369,7 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 
 	/**
 	 * The Buffer pool notifies this channel of an available floating buffer. If the channel is released or
-	 * currently does not need extra buffers, the buffer should be returned to the buffer pool. Otherwise,
+	 * currently does not need extra buffers, the buffer should be recycled to the buffer pool. Otherwise,
 	 * the buffer will be added into the <tt>bufferQueue</tt> and the unannounced credit is increased
 	 * by one.
 	 *
@@ -350,19 +379,14 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	 */
 	@Override
 	public NotificationResult notifyBufferAvailable(Buffer buffer) {
-		NotificationResult notificationResult = NotificationResult.BUFFER_NOT_USED;
+		NotificationResult notificationResult = NotificationResult.NONE;
+
 		try {
 			synchronized (bufferQueue) {
-				checkState(isWaitingForFloatingBuffers,
-					"This channel should be waiting for floating buffers.");
+				checkState(isWaitingForFloatingBuffers, "This channel should be waiting for floating buffers.");
 
-				// Important: make sure that we never add a buffer after releaseAllResources()
-				// released all buffers. Following scenarios exist:
-				// 1) releaseAllResources() already released buffers inside bufferQueue
-				// -> then isReleased is set correctly
-				// 2) releaseAllResources() did not yet release buffers from bufferQueue
-				// -> we may or may not have set isReleased yet but will always wait for the
-				// lock on bufferQueue to release buffers
+				// Important: double check the isReleased state inside synchronized block, so there is no
+				// race condition when notifyBufferAvailable and releaseAllResources running in parallel.
 				if (isReleased.get() || bufferQueue.getAvailableBufferSize() >= numRequiredBuffers) {
 					isWaitingForFloatingBuffers = false;
 					return notificationResult;
@@ -372,7 +396,7 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 
 				if (bufferQueue.getAvailableBufferSize() == numRequiredBuffers) {
 					isWaitingForFloatingBuffers = false;
-					notificationResult = NotificationResult.BUFFER_USED_NO_NEED_MORE;
+					notificationResult = NotificationResult.BUFFER_USED_FINISHED;
 				} else {
 					notificationResult = NotificationResult.BUFFER_USED_NEED_MORE;
 				}
@@ -384,6 +408,7 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 		} catch (Throwable t) {
 			setError(t);
 		}
+
 		return notificationResult;
 	}
 
@@ -425,17 +450,8 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 		}
 	}
 
-	@Override
 	public int unsynchronizedGetNumberOfQueuedBuffers() {
 		return Math.max(0, receivedBuffers.size());
-	}
-
-	public int unsynchronizedGetExclusiveBuffersUsed() {
-		return Math.max(0, initialCredit - bufferQueue.exclusiveBuffers.size());
-	}
-
-	public int unsynchronizedGetFloatingBuffersAvailable() {
-		return Math.max(0, bufferQueue.floatingBuffers.size());
 	}
 
 	public InputChannelID getInputChannelId() {
@@ -479,8 +495,8 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 		int numRequestedBuffers = 0;
 
 		synchronized (bufferQueue) {
-			// Similar to notifyBufferAvailable(), make sure that we never add a buffer
-			// after releaseAllResources() released all buffers (see above for details).
+			// Important: check the isReleased state inside synchronized block, so there is no
+			// race condition when onSenderBacklog and releaseAllResources running in parallel.
 			if (isReleased.get()) {
 				return;
 			}
@@ -505,40 +521,33 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	}
 
 	public void onBuffer(Buffer buffer, int sequenceNumber, int backlog) throws IOException {
-		boolean recycleBuffer = true;
+		boolean success = false;
 
 		try {
-
-			final boolean wasEmpty;
 			synchronized (receivedBuffers) {
-				// Similar to notifyBufferAvailable(), make sure that we never add a buffer
-				// after releaseAllResources() released all buffers from receivedBuffers
-				// (see above for details).
-				if (isReleased.get()) {
-					return;
-				}
+				if (!isReleased.get()) {
+					if (expectedSequenceNumber == sequenceNumber) {
+						int available = receivedBuffers.size();
 
-				if (expectedSequenceNumber != sequenceNumber) {
-					onError(new BufferReorderingException(expectedSequenceNumber, sequenceNumber));
-					return;
-				}
+						receivedBuffers.add(buffer);
+						expectedSequenceNumber++;
 
-				wasEmpty = receivedBuffers.isEmpty();
-				receivedBuffers.add(buffer);
-				recycleBuffer = false;
+						if (available == 0) {
+							notifyChannelNonEmpty();
+						}
+
+						success = true;
+					} else {
+						onError(new BufferReorderingException(expectedSequenceNumber, sequenceNumber));
+					}
+				}
 			}
 
-			++expectedSequenceNumber;
-
-			if (wasEmpty) {
-				notifyChannelNonEmpty();
-			}
-
-			if (backlog >= 0) {
+			if (success && backlog >= 0) {
 				onSenderBacklog(backlog);
 			}
 		} finally {
-			if (recycleBuffer) {
+			if (!success) {
 				buffer.recycleBuffer();
 			}
 		}

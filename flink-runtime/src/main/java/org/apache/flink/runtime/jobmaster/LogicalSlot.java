@@ -20,6 +20,7 @@ package org.apache.flink.runtime.jobmaster;
 
 import org.apache.flink.runtime.clusterframework.types.AllocationID;
 import org.apache.flink.runtime.instance.SlotSharingGroupId;
+import org.apache.flink.runtime.jobmanager.scheduler.CoLocationConstraint;
 import org.apache.flink.runtime.jobmanager.scheduler.Locality;
 import org.apache.flink.runtime.jobmanager.slots.TaskManagerGateway;
 import org.apache.flink.runtime.taskmanager.TaskManagerLocation;
@@ -37,7 +38,6 @@ public interface LogicalSlot {
 	Payload TERMINATED_PAYLOAD = new Payload() {
 
 		private final CompletableFuture<?> completedTerminationFuture = CompletableFuture.completedFuture(null);
-
 		@Override
 		public void fail(Throwable cause) {
 			// ignore
@@ -142,6 +142,14 @@ public interface LogicalSlot {
 	 */
 	@Nullable
 	SlotSharingGroupId getSlotSharingGroupId();
+
+	/**
+	 * Gets the co location constraint of this slot.
+	 *
+	 * @return co location constraint of this slot or null, if none.
+	 */
+	@Nullable
+	CoLocationConstraint getCoLocationConstraint();
 
 	/**
 	 * Payload for a logical slot.

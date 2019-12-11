@@ -57,6 +57,11 @@ class PipelinedSubpartitionView implements ResultSubpartitionView {
 	}
 
 	@Override
+	public void notifySubpartitionConsumed() {
+		releaseAllResources();
+	}
+
+	@Override
 	public void releaseAllResources() {
 		if (isReleased.compareAndSet(false, true)) {
 			// The view doesn't hold any resources and the parent cannot be restarted. Therefore,
@@ -81,18 +86,18 @@ class PipelinedSubpartitionView implements ResultSubpartitionView {
 	}
 
 	@Override
+	public void notifyCreditAdded(int creditDeltas) {
+		// No operations.
+	}
+
+	@Override
 	public Throwable getFailureCause() {
 		return parent.getFailureCause();
 	}
 
 	@Override
-	public int unsynchronizedGetNumberOfQueuedBuffers() {
-		return parent.unsynchronizedGetNumberOfQueuedBuffers();
-	}
-
-	@Override
 	public String toString() {
-		return String.format("PipelinedSubpartitionView(index: %d) of ResultPartition %s",
+		return String.format("PipelinedSubpartitionView(index: %d) of InternalResultPartition %s",
 				parent.index,
 				parent.parent.getPartitionId());
 	}

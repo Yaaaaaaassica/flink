@@ -20,14 +20,26 @@ package org.apache.flink.streaming.api.environment;
 import org.apache.flink.annotation.Public;
 import org.apache.flink.api.common.InvalidProgramException;
 import org.apache.flink.api.common.JobExecutionResult;
-import org.apache.flink.api.common.PlanExecutor;
+import org.apache.flink.api.common.JobID;
+import org.apache.flink.api.common.JobSubmissionResult;
 import org.apache.flink.api.java.ExecutionEnvironment;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.RestOptions;
+import org.apache.flink.configuration.TaskManagerOptions;
+import org.apache.flink.runtime.jobgraph.JobGraph;
+import org.apache.flink.runtime.jobgraph.SavepointRestoreSettings;
+import org.apache.flink.runtime.minicluster.MiniCluster;
+import org.apache.flink.runtime.minicluster.MiniClusterConfiguration;
 import org.apache.flink.streaming.api.graph.StreamGraph;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
 
-import java.util.Collections;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * The LocalStreamEnvironment is a StreamExecutionEnvironment that runs the program locally,
@@ -40,7 +52,11 @@ import java.util.Collections;
 @Public
 public class LocalStreamEnvironment extends StreamExecutionEnvironment {
 
+	private static final Logger LOG = LoggerFactory.getLogger(LocalStreamEnvironment.class);
+
 	private final Configuration configuration;
+
+	private Map<JobID, MiniCluster> submitMapping = new HashMap<>();
 
 	/**
 	 * Creates a new mini cluster stream environment that uses the default configuration.
@@ -68,19 +84,96 @@ public class LocalStreamEnvironment extends StreamExecutionEnvironment {
 		return configuration;
 	}
 
-	/**
-	 * Executes the JobGraph of the on a mini cluster of ClusterUtil with a user
-	 * specified name.
-	 *
-	 * @return The result of the job execution, containing elapsed time and accumulators.
-	 */
+	@Override
+	protected JobSubmissionResult executeInternal(String jobName, boolean detached, SavepointRestoreSettings savepointRestoreSettings) throws Exception {
+		// transform the streaming program into a JobGraph
+		StreamGraph streamGraph = getStreamGraph();
+		streamGraph.setJobName(jobName);
+		// transform the streaming program into a JobGraph
+		JobGraph jobGraph = streamGraph.getJobGraph();
+		jobGraph.setAllowQueuedScheduling(true);
+		MiniCluster miniCluster = prepareMiniCluster(jobGraph);
+
+		try {
+			return miniCluster.executeJob(jobGraph, detached);
+		}
+		finally {
+			transformations.clear();
+			if (!detached) {
+				miniCluster.close();
+			} else {
+				this.submitMapping.put(jobGraph.getJobID(), miniCluster);
+			}
+		}
+	}
+
 	@Override
 	public JobExecutionResult execute(StreamGraph streamGraph) throws Exception {
+		// transform the streaming program into a JobGraph
+		JobGraph jobGraph = streamGraph.getJobGraph();
+		jobGraph.setAllowQueuedScheduling(true);
+		MiniCluster miniCluster = prepareMiniCluster(jobGraph);
+
 		try {
-			final PlanExecutor executor = PlanExecutor.createLocalExecutor(configuration);
-			return executor.executePlan(streamGraph, Collections.emptyList(), Collections.emptyList());
-		} finally {
-			transformations.clear();
+			return (JobExecutionResult) miniCluster.executeJob(jobGraph, false);
 		}
+		finally {
+			transformations.clear();
+			miniCluster.close();
+		}
+	}
+
+	@Override
+	public void stopJob(JobID jobID) throws Exception {
+		MiniCluster miniCluster = this.submitMapping.get(jobID);
+		if (miniCluster == null) {
+			throw new RuntimeException("Try to stop an untraceable job");
+		}
+		miniCluster.stopJob(jobID).get();
+		miniCluster.close();
+		this.submitMapping.remove(jobID);
+	}
+
+	private MiniCluster prepareMiniCluster(JobGraph jobGraph) throws Exception {
+		Configuration configuration = new Configuration();
+		configuration.addAll(jobGraph.getJobConfiguration());
+		// Set the resource of miniCluster to infinite.
+		configuration.setInteger(TaskManagerOptions.TASK_MANAGER_HEAP_MEMORY, Integer.MAX_VALUE / 4);
+		configuration.setDouble(TaskManagerOptions.TASK_MANAGER_CORE, Integer.MAX_VALUE / 4);
+		configuration.setLong(TaskManagerOptions.MANAGED_MEMORY_SIZE, (Integer.MAX_VALUE / 4) >> 10);
+
+		// add (and override) the settings with what the user defined
+		configuration.addAll(this.configuration);
+
+		if (!configuration.contains(RestOptions.PORT)) {
+			configuration.setInteger(RestOptions.PORT, 0);
+		}
+
+		int numSlotsPerTaskManager = configuration.getInteger(TaskManagerOptions.NUM_TASK_SLOTS, jobGraph.getMaximumParallelism() * jobGraph.getNumberOfVertices());
+
+		MiniClusterConfiguration cfg = new MiniClusterConfiguration.Builder()
+				.setConfiguration(configuration)
+				.setNumSlotsPerTaskManager(numSlotsPerTaskManager)
+				.build();
+
+		if (LOG.isInfoEnabled()) {
+			LOG.info("Running job on local embedded Flink mini cluster");
+		}
+
+		MiniCluster miniCluster = new MiniCluster(cfg);
+		miniCluster.start();
+
+		configuration.setInteger(RestOptions.PORT, miniCluster.getRestAddress().getPort());
+		return miniCluster;
+	}
+
+	@Override
+	public void cancel(String jobId) {
+
+	}
+
+	@Override
+	public String triggerSavepoint(String jobId, String path) throws Exception {
+		throw new IOException("not supported");
 	}
 }

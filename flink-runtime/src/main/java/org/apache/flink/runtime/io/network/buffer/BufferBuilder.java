@@ -40,23 +40,24 @@ public class BufferBuilder {
 
 	private final SettablePositionMarker positionMarker = new SettablePositionMarker();
 
+	private boolean bufferConsumerCreated = false;
+
 	public BufferBuilder(MemorySegment memorySegment, BufferRecycler recycler) {
 		this.memorySegment = checkNotNull(memorySegment);
 		this.recycler = checkNotNull(recycler);
 	}
 
 	/**
-	 * This method always creates a {@link BufferConsumer} starting from the current writer offset. Data written to
-	 * {@link BufferBuilder} before creation of {@link BufferConsumer} won't be visible for that {@link BufferConsumer}.
-	 *
-	 * @return created matching instance of {@link BufferConsumer} to this {@link BufferBuilder}.
+	 * @return created matching instance of {@link BufferConsumer} to this {@link BufferBuilder}. There can exist only
+	 * one {@link BufferConsumer} per each {@link BufferBuilder} and vice versa.
 	 */
 	public BufferConsumer createBufferConsumer() {
+		checkState(!bufferConsumerCreated, "There can not exists two BufferConsumer for one BufferBuilder");
+		bufferConsumerCreated = true;
 		return new BufferConsumer(
 			memorySegment,
 			recycler,
-			positionMarker,
-			positionMarker.cachedPosition);
+			positionMarker);
 	}
 
 	/**
@@ -103,9 +104,9 @@ public class BufferBuilder {
 	 * @return number of written bytes.
 	 */
 	public int finish() {
-		int writtenBytes = positionMarker.markFinished();
+		positionMarker.markFinished();
 		commit();
-		return writtenBytes;
+		return getWrittenBytes();
 	}
 
 	public boolean isFinished() {
@@ -117,8 +118,16 @@ public class BufferBuilder {
 		return positionMarker.getCached() == getMaxCapacity();
 	}
 
+	public boolean isEmpty() {
+		return positionMarker.getCached() == 0;
+	}
+
 	public int getMaxCapacity() {
 		return memorySegment.size();
+	}
+
+	private int getWrittenBytes() {
+		return positionMarker.getCached();
 	}
 
 	/**
@@ -147,7 +156,7 @@ public class BufferBuilder {
 	 * Cached writing implementation of {@link PositionMarker}.
 	 *
 	 * <p>Writer ({@link BufferBuilder}) and reader ({@link BufferConsumer}) caches must be implemented independently
-	 * of one another - so that the cached values can not accidentally leak from one to another.
+	 * of one another - for example the cached values can not accidentally leak from one to another.
 	 *
 	 * <p>Remember to commit the {@link SettablePositionMarker} to make the changes visible.
 	 */
@@ -172,19 +181,12 @@ public class BufferBuilder {
 			return PositionMarker.getAbsolute(cachedPosition);
 		}
 
-		/**
-		 * Marks this position as finished and returns the current position.
-		 *
-		 * @return current position as of {@link #getCached()}
-		 */
-		public int markFinished() {
-			int currentPosition = getCached();
-			int newValue = -currentPosition;
+		public void markFinished() {
+			int newValue = -getCached();
 			if (newValue == 0) {
 				newValue = FINISHED_EMPTY;
 			}
 			set(newValue);
-			return currentPosition;
 		}
 
 		public void move(int offset) {

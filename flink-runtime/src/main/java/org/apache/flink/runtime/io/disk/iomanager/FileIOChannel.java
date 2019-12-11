@@ -37,10 +37,12 @@ public interface FileIOChannel {
 	 *
 	 * @return The channel ID.
 	 */
-	ID getChannelID();
+	FileIOChannel.ID getChannelID();
 
 	/**
 	 * Gets the size (in bytes) of the file underlying the channel.
+	 *
+	 * @return The size (in bytes) of the file underlying the channel.
 	 */
 	long getSize() throws IOException;
 
@@ -52,11 +54,11 @@ public interface FileIOChannel {
 	boolean isClosed();
 
 	/**
-	 * Closes the channel. For asynchronous implementations, this method waits until all pending requests are
-	 * handled. Even if an exception interrupts the closing, the underlying <tt>FileChannel</tt> is closed.
-	 *
-	 * @throws IOException Thrown, if an error occurred while waiting for pending requests.
-	 */
+	* Closes the channel. For asynchronous implementations, this method waits until all pending requests are
+	* handled. Even if an exception interrupts the closing, the underlying <tt>FileChannel</tt> is closed.
+	*
+	* @throws IOException Thrown, if an error occurred while waiting for pending requests.
+	*/
 	void close() throws IOException;
 
 	/**
@@ -66,15 +68,15 @@ public interface FileIOChannel {
 	 */
 	void deleteChannel();
 
-	FileChannel getNioFileChannel();
-
 	/**
-	 * Closes the channel and deletes the underlying file. For asynchronous implementations,
-	 * this method waits until all pending requests are handled.
-	 *
-	 * @throws IOException Thrown, if an error occurred while waiting for pending requests.
-	 */
-	void closeAndDelete() throws IOException;
+	* Closes the channel and deletes the underlying file.
+	* For asynchronous implementations, this method waits until all pending requests are handled;
+	*
+	* @throws IOException Thrown, if an error occurred while waiting for pending requests.
+	*/
+	public void closeAndDelete() throws IOException;
+
+	FileChannel getNioFileChannel();
 
 	// --------------------------------------------------------------------------------------------
 	// --------------------------------------------------------------------------------------------
@@ -82,7 +84,7 @@ public interface FileIOChannel {
 	/**
 	 * An ID identifying an underlying file channel.
 	 */
-	class ID {
+	public static class ID {
 
 		private static final int RANDOM_BYTES_LENGTH = 16;
 
@@ -90,18 +92,24 @@ public interface FileIOChannel {
 
 		private final int threadNum;
 
-		private ID(File path, int threadNum) {
+		public ID(String path) {
+			this.path = new File(path);
+			this.threadNum = 0;
+		}
+
+		protected ID(File path, int threadNum) {
 			this.path = path;
 			this.threadNum = threadNum;
 		}
 
-		public ID(File basePath, int threadNum, Random random) {
+		protected ID(File basePath, int threadNum, Random random) {
 			this.path = new File(basePath, randomString(random) + ".channel");
 			this.threadNum = threadNum;
 		}
 
 		/**
 		 * Returns the path to the underlying temporary file.
+		 * @return The path to the underlying temporary file..
 		 */
 		public String getPath() {
 			return path.getAbsolutePath();
@@ -109,6 +117,7 @@ public interface FileIOChannel {
 
 		/**
 		 * Returns the path to the underlying temporary file as a File.
+		 * @return The path to the underlying temporary file as a File.
 		 */
 		public File getPathFile() {
 			return path;
@@ -148,7 +157,7 @@ public interface FileIOChannel {
 	/**
 	 * An enumerator for channels that logically belong together.
 	 */
-	final class Enumerator {
+	public static final class Enumerator {
 
 		private static AtomicInteger globalCounter = new AtomicInteger();
 
@@ -156,11 +165,14 @@ public interface FileIOChannel {
 
 		private final String namePrefix;
 
+		private final int numThread;
+
 		private int localCounter;
 
-		public Enumerator(File[] basePaths, Random random) {
+		protected Enumerator(File[] basePaths, Random random, int numThread) {
 			this.paths = basePaths;
 			this.namePrefix = ID.randomString(random);
+			this.numThread = numThread;
 			this.localCounter = 0;
 		}
 
@@ -168,9 +180,12 @@ public interface FileIOChannel {
 			// The local counter is used to increment file names while the global counter is used
 			// for indexing the directory and associated read and write threads. This performs a
 			// round-robin among all spilling operators and avoids I/O bunching.
-			int threadNum = globalCounter.getAndIncrement() % paths.length;
+			int currentCounter = globalCounter.get();
+			int pathNum = currentCounter % paths.length;
+			int threadNum = currentCounter % numThread;
+			globalCounter.getAndIncrement();
 			String filename = String.format("%s.%06d.channel", namePrefix, (localCounter++));
-			return new ID(new File(paths[threadNum], filename), threadNum);
+			return new ID(new File(paths[pathNum], filename), threadNum);
 		}
 	}
 }

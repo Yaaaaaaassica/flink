@@ -70,9 +70,8 @@ import java.util.Set;
  *     while (running) {
  *         Message msg = queue.retrieve();
  *         synchronized (ctx.getCheckpointLock()) {
- *             if (addId(msg.getMessageId())) {
- *                 ctx.collect(msg.getMessageData());
- *             }
+ *             ctx.collect(msg.getMessageData());
+ *             addId(msg.getMessageId());
  *         }
  *     }
  * }
@@ -188,8 +187,7 @@ public abstract class MessageAcknowledgingSourceBase<Type, UId>
 	protected abstract void acknowledgeIDs(long checkpointId, Set<UId> uIds);
 
 	/**
-	 * Adds an ID to be stored with the current checkpoint. In order to achieve exactly-once guarantees, implementing
-	 * classes should only emit records with IDs for which this method return true.
+	 * Adds an ID to be stored with the current checkpoint.
 	 * @param uid The ID to add.
 	 * @return True if the id has not been processed previously.
 	 */
@@ -209,7 +207,7 @@ public abstract class MessageAcknowledgingSourceBase<Type, UId>
 			"The " + getClass().getSimpleName() + " has not been properly initialized.");
 
 		if (LOG.isDebugEnabled()) {
-			LOG.debug("Checkpointing: Messages: {}, checkpoint id: {}, timestamp: {}",
+			LOG.debug("{} checkpointing: Messages: {}, checkpoint id: {}, timestamp: {}",
 				idsForCurrentCheckpoint, context.getCheckpointId(), context.getCheckpointTimestamp());
 		}
 

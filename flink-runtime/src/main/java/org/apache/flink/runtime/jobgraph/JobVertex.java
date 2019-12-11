@@ -18,21 +18,22 @@
 
 package org.apache.flink.runtime.jobgraph;
 
+import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.ExecutionConfig;
-import org.apache.flink.api.common.InputDependencyConstraint;
 import org.apache.flink.api.common.operators.ResourceSpec;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.io.InputSplitSource;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionType;
 import org.apache.flink.runtime.jobgraph.tasks.AbstractInvokable;
+import org.apache.flink.runtime.jobgraph.tasks.StoppableTask;
 import org.apache.flink.runtime.jobmanager.scheduler.CoLocationGroup;
 import org.apache.flink.runtime.jobmanager.scheduler.SlotSharingGroup;
 import org.apache.flink.util.Preconditions;
 
-import javax.annotation.Nullable;
-
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
@@ -61,6 +62,9 @@ public class JobVertex implements java.io.Serializable {
 	/** The alternative IDs of all operators contained in this vertex. */
 	private final ArrayList<OperatorID> operatorIdsAlternatives = new ArrayList<>();
 
+	/** The descriptor of operators in this vertex. */
+	private final ArrayList<OperatorDescriptor> operatorDescriptors = new ArrayList<>();
+
 	/** List of produced data sets, one per writer */
 	private final ArrayList<IntermediateDataSet> results = new ArrayList<IntermediateDataSet>();
 
@@ -88,8 +92,8 @@ public class JobVertex implements java.io.Serializable {
 	/** Indicates of this job vertex is stoppable or not. */
 	private boolean isStoppable = false;
 
-	/** Optionally, a source of input splits */
-	private InputSplitSource<?> inputSplitSource;
+	/** Optionally, one or more sources of input splits */
+	private Map<OperatorID, InputSplitSource<?>> inputSplitSourceMap;
 
 	/** The name of the vertex. This will be shown in runtime logs and will be in the runtime environment */
 	private String name;
@@ -113,9 +117,6 @@ public class JobVertex implements java.io.Serializable {
 	/** Optional, the JSON for the optimizer properties of the operator result,
 	 * to be included in the JSON plan */
 	private String resultOptimizerProperties;
-
-	/** The input dependency constraint to schedule this vertex. */
-	private InputDependencyConstraint inputDependencyConstraint = InputDependencyConstraint.ANY;
 
 	// --------------------------------------------------------------------------------------------
 
@@ -181,6 +182,19 @@ public class JobVertex implements java.io.Serializable {
 	}
 
 	/**
+	 * Returns a list of all operator descriptors of this job vertex.
+	 *
+	 * @return List of all operator descriptors of this job vertex
+	 */
+	public List<OperatorDescriptor> getOperatorDescriptors() {
+		return operatorDescriptors;
+	}
+
+	public void addOperatorDescriptor(OperatorDescriptor operatorDescriptor) {
+		operatorDescriptors.add(operatorDescriptor);
+	}
+
+	/**
 	 * Returns the name of the vertex.
 	 * 
 	 * @return The name of the vertex.
@@ -239,6 +253,7 @@ public class JobVertex implements java.io.Serializable {
 	public void setInvokableClass(Class<? extends AbstractInvokable> invokable) {
 		Preconditions.checkNotNull(invokable);
 		this.invokableClassName = invokable.getName();
+		this.isStoppable = StoppableTask.class.isAssignableFrom(invokable);
 	}
 
 	/**
@@ -294,6 +309,16 @@ public class JobVertex implements java.io.Serializable {
 			throw new IllegalArgumentException("The parallelism must be at least one.");
 		}
 		this.parallelism = parallelism;
+
+		// Clear the consumer execution vertices cache for related edges
+		for (JobEdge edge : getInputs()) {
+			edge.clearConsumerExecutionVerticesCache();
+		}
+		for (IntermediateDataSet dataSet : getProducedDataSets()) {
+			for (JobEdge edge :dataSet.getConsumers()) {
+				edge.clearConsumerExecutionVerticesCache();
+			}
+		}
 	}
 
 	/**
@@ -343,12 +368,16 @@ public class JobVertex implements java.io.Serializable {
 		this.preferredResources = checkNotNull(preferredResources);
 	}
 
-	public InputSplitSource<?> getInputSplitSource() {
-		return inputSplitSource;
+	public Map<OperatorID, InputSplitSource<?>> getInputSplitSources() {
+		return inputSplitSourceMap;
 	}
 
-	public void setInputSplitSource(InputSplitSource<?> inputSplitSource) {
-		this.inputSplitSource = inputSplitSource;
+	public void setInputSplitSource(OperatorID operatorID, InputSplitSource<?> inputSplitSource) {
+		if (this.inputSplitSourceMap == null) {
+			// lazy assignment
+			this.inputSplitSourceMap = new HashMap<>();
+		}
+		this.inputSplitSourceMap.put(operatorID, inputSplitSource);
 	}
 
 	public List<IntermediateDataSet> getProducedDataSets() {
@@ -383,7 +412,6 @@ public class JobVertex implements java.io.Serializable {
 	 * 
 	 * @return The slot sharing group to associate the vertex with, or {@code null}, if not associated with one.
 	 */
-	@Nullable
 	public SlotSharingGroup getSlotSharingGroup() {
 		return slotSharingGroup;
 	}
@@ -446,6 +474,7 @@ public class JobVertex implements java.io.Serializable {
 
 	// --------------------------------------------------------------------------------------------
 
+	@VisibleForTesting
 	public IntermediateDataSet createAndAddResultDataSet(ResultPartitionType partitionType) {
 		return createAndAddResultDataSet(new IntermediateDataSetID(), partitionType);
 	}
@@ -459,6 +488,7 @@ public class JobVertex implements java.io.Serializable {
 		return result;
 	}
 
+	@VisibleForTesting
 	public JobEdge connectDataSetAsInput(IntermediateDataSet dataSet, DistributionPattern distPattern) {
 		JobEdge edge = new JobEdge(dataSet, this, distPattern);
 		this.inputs.add(edge);
@@ -471,7 +501,16 @@ public class JobVertex implements java.io.Serializable {
 			DistributionPattern distPattern,
 			ResultPartitionType partitionType) {
 
-		IntermediateDataSet dataSet = input.createAndAddResultDataSet(partitionType);
+		return connectDataSetAsInput(input, new IntermediateDataSetID(), distPattern, partitionType);
+	}
+
+	public JobEdge connectDataSetAsInput(
+			JobVertex input,
+			IntermediateDataSetID dataSetID,
+			DistributionPattern distPattern,
+			ResultPartitionType partitionType) {
+
+		IntermediateDataSet dataSet = input.createAndAddResultDataSet(dataSetID, partitionType);
 
 		JobEdge edge = new JobEdge(dataSet, this, distPattern);
 		this.inputs.add(edge);
@@ -479,6 +518,7 @@ public class JobVertex implements java.io.Serializable {
 		return edge;
 	}
 
+	@VisibleForTesting
 	public void connectIdInput(IntermediateDataSetID dataSetId, DistributionPattern distPattern) {
 		JobEdge edge = new JobEdge(dataSetId, this, distPattern);
 		this.inputs.add(edge);
@@ -560,14 +600,6 @@ public class JobVertex implements java.io.Serializable {
 
 	public void setResultOptimizerProperties(String resultOptimizerProperties) {
 		this.resultOptimizerProperties = resultOptimizerProperties;
-	}
-
-	public InputDependencyConstraint getInputDependencyConstraint() {
-		return inputDependencyConstraint;
-	}
-
-	public void setInputDependencyConstraint(InputDependencyConstraint inputDependencyConstraint) {
-		this.inputDependencyConstraint = inputDependencyConstraint;
 	}
 
 	// --------------------------------------------------------------------------------------------

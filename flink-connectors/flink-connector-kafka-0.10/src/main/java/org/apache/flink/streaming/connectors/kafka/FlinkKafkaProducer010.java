@@ -24,12 +24,12 @@ import org.apache.flink.streaming.api.datastream.DataStreamSink;
 import org.apache.flink.streaming.api.functions.sink.SinkFunction;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.transformations.SinkTransformation;
-import org.apache.flink.streaming.connectors.kafka.internals.KeyedSerializationSchemaWrapper;
 import org.apache.flink.streaming.connectors.kafka.partitioner.FlinkFixedPartitioner;
 import org.apache.flink.streaming.connectors.kafka.partitioner.FlinkKafkaDelegatePartitioner;
 import org.apache.flink.streaming.connectors.kafka.partitioner.FlinkKafkaPartitioner;
 import org.apache.flink.streaming.connectors.kafka.partitioner.KafkaPartitioner;
 import org.apache.flink.streaming.util.serialization.KeyedSerializationSchema;
+import org.apache.flink.streaming.util.serialization.KeyedSerializationSchemaWrapper;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
 
@@ -347,39 +347,13 @@ public class FlinkKafkaProducer010<T> extends FlinkKafkaProducer09<T> {
 	// ----------------------------- Generic element processing  ---------------------------
 
 	@Override
-	public void invoke(T value, Context context) throws Exception {
-
-		checkErroneous();
-
-		byte[] serializedKey = schema.serializeKey(value);
-		byte[] serializedValue = schema.serializeValue(value);
-		String targetTopic = schema.getTargetTopic(value);
-		if (targetTopic == null) {
-			targetTopic = defaultTopicId;
-		}
-
+	protected ProducerRecord<byte[], byte[]> buildProducerRecord(
+		Context context, String topic, Integer partition, byte[] keyBytes, byte[] valueBytes) {
 		Long timestamp = null;
 		if (this.writeTimestampToKafka) {
 			timestamp = context.timestamp();
 		}
-
-		ProducerRecord<byte[], byte[]> record;
-		int[] partitions = topicPartitionsMap.get(targetTopic);
-		if (null == partitions) {
-			partitions = getPartitionsByTopic(targetTopic, producer);
-			topicPartitionsMap.put(targetTopic, partitions);
-		}
-		if (flinkKafkaPartitioner == null) {
-			record = new ProducerRecord<>(targetTopic, null, timestamp, serializedKey, serializedValue);
-		} else {
-			record = new ProducerRecord<>(targetTopic, flinkKafkaPartitioner.partition(value, serializedKey, serializedValue, targetTopic, partitions), timestamp, serializedKey, serializedValue);
-		}
-		if (flushOnCheckpoint) {
-			synchronized (pendingRecordsLock) {
-				pendingRecords++;
-			}
-		}
-		producer.send(record, callback);
+		return new ProducerRecord<>(topic, partition, timestamp, keyBytes, valueBytes);
 	}
 
 	/**

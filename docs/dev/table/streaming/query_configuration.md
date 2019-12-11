@@ -30,12 +30,12 @@ Flink's Table API and SQL interface provide parameters to tune the accuracy and 
 <div data-lang="java" markdown="1">
 {% highlight java %}
 StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
+StreamTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env);
 
 // obtain query configuration from TableEnvironment
 StreamQueryConfig qConfig = tableEnv.queryConfig();
 // set query parameters
-qConfig.withIdleStateRetentionTime(Time.hours(12), Time.hours(24));
+qConfig.withIdleStateRetentionTime(Time.hours(12));
 
 // define query
 Table result = ...
@@ -43,15 +43,8 @@ Table result = ...
 // create TableSink
 TableSink<Row> sink = ...
 
-// register TableSink
-tableEnv.registerTableSink(
-  "outputTable",               // table name
-  new String[]{...},           // field names
-  new TypeInformation[]{...},  // field types
-  sink);                       // table sink
-
 // emit result Table via a TableSink
-result.insertInto("outputTable", qConfig);
+result.writeToSink(sink, qConfig);
 
 // convert result Table into a DataStream<Row>
 DataStream<Row> stream = tableEnv.toAppendStream(result, Row.class, qConfig);
@@ -61,12 +54,12 @@ DataStream<Row> stream = tableEnv.toAppendStream(result, Row.class, qConfig);
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
 val env = StreamExecutionEnvironment.getExecutionEnvironment
-val tableEnv = StreamTableEnvironment.create(env)
+val tableEnv = TableEnvironment.getTableEnvironment(env)
 
 // obtain query configuration from TableEnvironment
 val qConfig: StreamQueryConfig = tableEnv.queryConfig
 // set query parameters
-qConfig.withIdleStateRetentionTime(Time.hours(12), Time.hours(24))
+qConfig.withIdleStateRetentionTime(Time.hours(12))
 
 // define query
 val result: Table = ???
@@ -74,43 +67,11 @@ val result: Table = ???
 // create TableSink
 val sink: TableSink[Row] = ???
 
-// register TableSink
-tableEnv.registerTableSink(
-  "outputTable",                  // table name
-  Array[String](...),             // field names
-  Array[TypeInformation[_]](...), // field types
-  sink)                           // table sink
-
 // emit result Table via a TableSink
-result.insertInto("outputTable", qConfig)
+result.writeToSink(sink, qConfig)
 
 // convert result Table into a DataStream[Row]
 val stream: DataStream[Row] = result.toAppendStream[Row](qConfig)
-
-{% endhighlight %}
-</div>
-<div data-lang="python" markdown="1">
-{% highlight python %}
-# use TableConfig instead of QueryConfig in python API
-t_config = TableConfig()
-# set query parameters
-t_config.set_idle_state_retention_time(timedelta(hours=12), timedelta(hours=24))
-
-env = StreamExecutionEnvironment.get_execution_environment()
-table_env = StreamTableEnvironment.create(env, t_config)
-
-# define query
-result = ...
-
-# create TableSink
-sink = ...
-
-# register TableSink
-table_env.register_table_sink("outputTable",  # table name
-                              sink)  # table sink
-
-# emit result Table via a TableSink
-result.insert_into("outputTable")
 
 {% endhighlight %}
 </div>
@@ -147,8 +108,10 @@ The parameters are specified as follows:
 
 StreamQueryConfig qConfig = ...
 
-// set idle state retention time: min = 12 hours, max = 24 hours
-qConfig.withIdleStateRetentionTime(Time.hours(12), Time.hours(24));
+// set idle state retention time: min = 12 hour, max = 16 hours
+qConfig.withIdleStateRetentionTime(Time.hours(12), Time.hours(16));
+// set idle state retention time. min = max = 12 hours
+qConfig.withIdleStateRetentionTime(Time.hours(12));
 
 {% endhighlight %}
 </div>
@@ -157,23 +120,16 @@ qConfig.withIdleStateRetentionTime(Time.hours(12), Time.hours(24));
 
 val qConfig: StreamQueryConfig = ???
 
-// set idle state retention time: min = 12 hours, max = 24 hours
-qConfig.withIdleStateRetentionTime(Time.hours(12), Time.hours(24))
-
-{% endhighlight %}
-</div>
-<div data-lang="python" markdown="1">
-{% highlight python %}
-
-q_config = ...  # type: StreamQueryConfig
-
-# set idle state retention time: min = 12 hours, max = 24 hours
-q_config.with_idle_state_retention_time(timedelta(hours=12), timedelta(hours=24))
+// set idle state retention time: min = 12 hour, max = 16 hours
+qConfig.withIdleStateRetentionTime(Time.hours(12), Time.hours(16))
+// set idle state retention time. min = max = 12 hours
+qConfig.withIdleStateRetentionTime(Time.hours(12))
 
 {% endhighlight %}
 </div>
 </div>
 
-Cleaning up state requires additional bookkeeping which becomes less expensive for larger differences of `minTime` and `maxTime`. The difference between `minTime` and `maxTime` must be at least 5 minutes.
+Configuring different minimum and maximum idle state retention times is more efficient because it reduces the internal book-keeping of a query for when to remove state.
 
 {% top %}
+
