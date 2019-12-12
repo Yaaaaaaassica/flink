@@ -112,9 +112,6 @@ class SequenceNumberingViewReader implements BufferAvailabilityListener, Network
 	public BufferAndAvailability getNextBuffer() throws IOException, InterruptedException {
 		BufferAndBacklog next = subpartitionView.getNextBuffer();
 
-
-		log.error(" {} {}",next);
-
 		if (next != null) {
 			sequenceNumber++;
 			return new BufferAndAvailability(next.buffer(), next.isMoreAvailable(), next.buffersInBacklog());

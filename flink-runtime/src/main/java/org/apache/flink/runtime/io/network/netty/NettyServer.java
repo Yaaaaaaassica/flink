@@ -172,6 +172,8 @@ public class NettyServer {
 
 		long end = System.currentTimeMillis();
 		LOG.info("Successful initialization (took {} ms). Listening on SocketAddress {}.", (end - start), bindFuture.channel().localAddress().toString());
+
+		LOG.error("[NETTY] IO服务 (took {} ms). Listening on SocketAddress {}.", (end - start), bindFuture.channel().localAddress().toString());
 	}
 
 	NettyConfig getConfig() {

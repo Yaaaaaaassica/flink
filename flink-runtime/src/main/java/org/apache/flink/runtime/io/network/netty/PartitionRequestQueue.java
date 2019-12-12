@@ -18,6 +18,7 @@
 
 package org.apache.flink.runtime.io.network.netty;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.runtime.io.network.NetworkSequenceViewReader;
 import org.apache.flink.runtime.io.network.api.EndOfPartitionEvent;
@@ -53,6 +54,7 @@ import static org.apache.flink.runtime.io.network.netty.NettyMessage.BufferRespo
  * A nonEmptyReader of partition queues, which listens for channel writability changed
  * events before writing and flushing {@link Buffer} instances.
  */
+@Slf4j
 class PartitionRequestQueue extends ChannelInboundHandlerAdapter {
 
 	private static final Logger LOG = LoggerFactory.getLogger(PartitionRequestQueue.class);
@@ -190,6 +192,8 @@ class PartitionRequestQueue extends ChannelInboundHandlerAdapter {
 		// hand over of reader queues and cancelled producers.
 
 		if (msg instanceof NetworkSequenceViewReader) {
+			//
+			log.warn("事件就绪，触发IO发送事件 {}");
 			enqueueAvailableReader((NetworkSequenceViewReader) msg);
 		} else if (msg.getClass() == InputChannelID.class) {
 			// Release partition view that get a cancel request.
@@ -284,6 +288,8 @@ class PartitionRequestQueue extends ChannelInboundHandlerAdapter {
 
 					// Write and flush and wait until this is done before
 					// trying to continue with the next buffer.
+
+					log.warn("channel 写数据 local={} remote= {},msg={}",channel.localAddress(),channel.remoteAddress(),msg);
 					channel.writeAndFlush(msg).addListener(writeListener);
 
 					return;
@@ -373,6 +379,7 @@ class PartitionRequestQueue extends ChannelInboundHandlerAdapter {
 		public void operationComplete(ChannelFuture future) throws Exception {
 			try {
 				if (future.isSuccess()) {
+
 					writeAndFlushNextMessageIfPossible(future.channel());
 				} else if (future.cause() != null) {
 					handleException(future.channel(), future.cause());

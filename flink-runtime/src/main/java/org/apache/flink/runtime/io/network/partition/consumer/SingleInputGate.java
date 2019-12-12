@@ -601,6 +601,7 @@ public class SingleInputGate implements InputGate {
 					}
 
 					if (blocking) {
+						System.out.println("唤醒");
 						inputChannelsWithData.wait();
 					}
 					else {

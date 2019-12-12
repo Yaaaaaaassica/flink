@@ -17,6 +17,7 @@
 
 package org.apache.flink.streaming.api.functions.source;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.util.IOUtils;
 
@@ -42,6 +43,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * <p>The function can be set to reconnect to the server socket in case that the stream is closed on
  * the server side.
  */
+@Slf4j
 @PublicEvolving
 public class SocketTextStreamFunction implements SourceFunction<String> {
 
@@ -107,6 +109,8 @@ public class SocketTextStreamFunction implements SourceFunction<String> {
 							if (delimiter.equals("\n") && record.endsWith("\r")) {
 								record = record.substring(0, record.length() - 1);
 							}
+
+							log.warn("source 接收数据"+record);
 							ctx.collect(record);
 							buffer.delete(0, delimPos + delimiter.length());
 						}

@@ -66,11 +66,14 @@ public class SocketWindowWordCount {
 		// get the execution environment
 
 		Configuration configuration = new Configuration();
+
+
 		configuration.setBoolean(TaskManagerOptions.NETWORK_CREDIT_MODEL,false);
 		configuration.setInteger(RestOptions.PORT,8080);
 		final StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(configuration);
 
 		env.setBufferTimeout(0L);
+		env.disableOperatorChaining();
 
 		// get input data by connecting to the socket
 		DataStream<String> text = env.socketTextStream(hostname, port, "\n");
@@ -82,6 +85,8 @@ public class SocketWindowWordCount {
 					@Override
 					public void flatMap(String value, Collector<WordWithCount> out) {
 						for (String word : value.split("\\s")) {
+
+							System.err.println(word);
 							out.collect(new WordWithCount(word, 1L));
 						}
 					}

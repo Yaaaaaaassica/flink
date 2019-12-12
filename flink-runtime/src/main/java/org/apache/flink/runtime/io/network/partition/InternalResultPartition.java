@@ -18,6 +18,7 @@
 
 package org.apache.flink.runtime.io.network.partition;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
@@ -54,6 +55,7 @@ import static org.apache.flink.util.Preconditions.checkState;
 /**
  * InternalResultPartition is used when shuffling data through taskmanager.
  */
+@Slf4j
 public class InternalResultPartition<T> extends ResultPartition<T> implements BufferPoolOwner {
 
 	private static final Logger LOG = LoggerFactory.getLogger(InternalResultPartition.class);
@@ -267,6 +269,9 @@ public class InternalResultPartition<T> extends ResultPartition<T> implements Bu
 			throw ex;
 		}
 
+		// 向结果子视图写数据
+
+		log.warn("向结果子视图写数据 subpartitionIndex={} data={}",subpartition,bufferConsumer);
 		if (subpartition.add(bufferConsumer)) {
 			notifyPipelinedConsumers();
 		}
