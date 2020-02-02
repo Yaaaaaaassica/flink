@@ -24,7 +24,7 @@ under the License.
 	<parent>
 		<groupId>org.apache.flink</groupId>
 		<artifactId>flink-parent</artifactId>
-		<version>1.11-SNAPSHOT</version>
+		<version>20191101</version>
 		<relativePath>..</relativePath>
 	</parent>
 
@@ -36,7 +36,8 @@ under the License.
 		<module>flink-examples-batch</module>
 		<module>flink-examples-streaming</module>
 		<module>flink-examples-table</module>
-		<module>flink-examples-build-helper</module>
+        <!--		<module>flink-examples-build-helper</module>-->
+		<module>minicluster</module>
 	</modules>
 
 	<dependencies>
@@ -66,8 +67,10 @@ under the License.
 
 		<dependency>
 			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-test-utils-junit</artifactId>
+			<artifactId>flink-runtime-web_${scala.binary.version}</artifactId>
+			<version>${project.version}</version>
 		</dependency>
+
 
 	</dependencies>
 

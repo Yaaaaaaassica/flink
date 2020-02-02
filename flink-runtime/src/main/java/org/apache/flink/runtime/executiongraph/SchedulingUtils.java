@@ -18,10 +18,11 @@
 
 package org.apache.flink.runtime.executiongraph;
 
-import org.apache.flink.api.common.JobStatus;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.runtime.clusterframework.types.AllocationID;
 import org.apache.flink.runtime.concurrent.FutureUtils;
 import org.apache.flink.runtime.concurrent.FutureUtils.ConjunctFuture;
+import org.apache.flink.runtime.jobgraph.JobStatus;
 import org.apache.flink.runtime.jobgraph.ScheduleMode;
 import org.apache.flink.runtime.jobmanager.scheduler.LocationPreferenceConstraint;
 import org.apache.flink.runtime.jobmanager.scheduler.NoResourceAvailableException;
@@ -45,6 +46,7 @@ import static org.apache.flink.util.Preconditions.checkState;
  * This class contains scheduling logic for EAGER and LAZY_FROM_SOURCES.
  * It is used for normal scheduling and legacy failover strategy re-scheduling.
  */
+@Slf4j
 public class SchedulingUtils {
 
 	public static CompletableFuture<Void> schedule(
@@ -144,6 +146,10 @@ public class SchedulingUtils {
 			(Collection<Execution> executionsToDeploy) -> {
 				for (Execution execution : executionsToDeploy) {
 					try {
+
+						// todo 资源都已调度好，开始部署
+
+						//log.warn("execution deploy() {}" ,execution);
 						execution.deploy();
 					} catch (Throwable t) {
 						throw new CompletionException(
