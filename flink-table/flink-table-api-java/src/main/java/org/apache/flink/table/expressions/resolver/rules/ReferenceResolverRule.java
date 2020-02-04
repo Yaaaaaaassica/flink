@@ -34,7 +34,7 @@ import static org.apache.flink.table.expressions.utils.ApiExpressionUtils.unreso
 
 /**
  * Resolves {@link UnresolvedReferenceExpression} to either
- * {@link org.apache.flink.table.expressions.FieldReferenceExpression},
+ * {@link FieldReferenceExpression},
  * {@link org.apache.flink.table.expressions.TableReferenceExpression}, or
  * {@link LocalReferenceExpression} in this order.
  */

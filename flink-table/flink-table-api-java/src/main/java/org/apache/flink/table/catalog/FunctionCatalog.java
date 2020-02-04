@@ -335,7 +335,7 @@ public final class FunctionCatalog implements FunctionLookup {
 	}
 
 	@Override
-	public Optional<FunctionLookup.Result> lookupFunction(UnresolvedIdentifier identifier) {
+	public Optional<Result> lookupFunction(UnresolvedIdentifier identifier) {
 		// precise function reference
 		if (identifier.getDatabaseName().isPresent()) {
 			return resolvePreciseFunctionReference(catalogManager.qualifyIdentifier(identifier));
@@ -532,7 +532,7 @@ public final class FunctionCatalog implements FunctionLookup {
 		return result;
 	}
 
-	private Optional<FunctionLookup.Result> resolvePreciseFunctionReference(ObjectIdentifier oi) {
+	private Optional<Result> resolvePreciseFunctionReference(ObjectIdentifier oi) {
 		// resolve order:
 		// 1. Temporary functions
 		// 2. Catalog functions
@@ -541,7 +541,7 @@ public final class FunctionCatalog implements FunctionLookup {
 
 		if (potentialResult != null) {
 			return Optional.of(
-				new FunctionLookup.Result(
+				new Result(
 					FunctionIdentifier.of(oi),
 					potentialResult
 				)
@@ -567,7 +567,7 @@ public final class FunctionCatalog implements FunctionLookup {
 				}
 
 				return Optional.of(
-					new FunctionLookup.Result(FunctionIdentifier.of(oi), fd));
+					new Result(FunctionIdentifier.of(oi), fd));
 			} catch (FunctionNotExistException e) {
 				// Ignore
 			}
@@ -576,7 +576,7 @@ public final class FunctionCatalog implements FunctionLookup {
 		return Optional.empty();
 	}
 
-	private Optional<FunctionLookup.Result> resolveAmbiguousFunctionReference(String funcName) {
+	private Optional<Result> resolveAmbiguousFunctionReference(String funcName) {
 		// resolve order:
 		// 1. Temporary system functions
 		// 2. System functions
@@ -586,7 +586,7 @@ public final class FunctionCatalog implements FunctionLookup {
 		String normalizedName = FunctionIdentifier.normalizeName(funcName);
 		if (tempSystemFunctions.containsKey(normalizedName)) {
 			return Optional.of(
-				new FunctionLookup.Result(
+				new Result(
 					FunctionIdentifier.of(funcName),
 					tempSystemFunctions.get(normalizedName))
 			);
