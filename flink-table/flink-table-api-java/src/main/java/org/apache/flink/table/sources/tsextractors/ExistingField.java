@@ -40,7 +40,7 @@ import static org.apache.flink.table.types.utils.TypeConversions.fromLegacyInfoT
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
- * Converts an existing {@link Long}, {@link java.sql.Timestamp}, or
+ * Converts an existing {@link Long}, {@link Timestamp}, or
  * timestamp formatted java.lang.String field (e.g., "2018-05-28 12:34:56.000") into
  * a rowtime attribute.
  */

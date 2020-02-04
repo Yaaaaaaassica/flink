@@ -61,8 +61,8 @@ public class TopSpeedWindowing {
 		if (params.has("input")) {
 			carData = env.readTextFile(params.get("input")).map(new ParseCarData());
 		} else {
-			System.out.println("Executing TopSpeedWindowing example with default input data set.");
-			System.out.println("Use --input to specify file input.");
+			System.err.println("Executing TopSpeedWindowing example with default input data set.");
+			System.err.println("Use --input to specify file input.");
 			carData = env.addSource(CarSource.create(2));
 		}
 

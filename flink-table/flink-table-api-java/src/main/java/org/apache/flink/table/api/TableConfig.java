@@ -189,7 +189,7 @@ public class TableConfig {
 
 	/**
 	 * Returns the default context for decimal division calculation.
-	 * {@link java.math.MathContext#DECIMAL128} by default.
+	 * {@link MathContext#DECIMAL128} by default.
 	 */
 	public MathContext getDecimalContext() {
 		return decimalContext;
@@ -197,7 +197,7 @@ public class TableConfig {
 
 	/**
 	 * Sets the default context for decimal division calculation.
-	 * {@link java.math.MathContext#DECIMAL128} by default.
+	 * {@link MathContext#DECIMAL128} by default.
 	 */
 	public void setDecimalContext(MathContext decimalContext) {
 		this.decimalContext = Preconditions.checkNotNull(decimalContext);

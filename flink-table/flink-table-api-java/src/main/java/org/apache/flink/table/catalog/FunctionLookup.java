@@ -29,7 +29,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Catalog of functions that can resolve the name of a function to a {@link FunctionLookup.Result}.
+ * Catalog of functions that can resolve the name of a function to a {@link Result}.
  */
 @Internal
 public interface FunctionLookup {

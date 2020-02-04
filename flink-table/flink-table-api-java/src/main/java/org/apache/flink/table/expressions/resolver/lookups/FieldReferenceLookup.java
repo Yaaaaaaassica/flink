@@ -52,7 +52,7 @@ public class FieldReferenceLookup {
 	 *
 	 * @param name name of field to look for
 	 * @return resolved field reference or empty if could not find field with given name.
-	 * @throws org.apache.flink.table.api.ValidationException if the name is ambiguous.
+	 * @throws ValidationException if the name is ambiguous.
 	 */
 	public Optional<FieldReferenceExpression> lookupField(String name) {
 		List<FieldReferenceExpression> matchingFields = fieldReferences.stream()
