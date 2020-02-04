@@ -36,7 +36,7 @@ under the License.
 		<module>flink-examples-batch</module>
 		<module>flink-examples-streaming</module>
 		<module>flink-examples-table</module>
-<!--		<module>flink-examples-build-helper</module>-->
+        <!--		<module>flink-examples-build-helper</module>-->
 		<module>minicluster</module>
 	</modules>
 
@@ -75,6 +75,25 @@ under the License.
 	</dependencies>
 
 	<build>
+		<pluginManagement>
+			<plugins>
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-antrun-plugin</artifactId>
+					<version>1.7</version>
+					<executions>
+						<execution>
+							<id>rename</id>
+							<phase>package</phase>
+							<goals>
+								<goal>run</goal>
+							</goals>
+						</execution>
+					</executions>
+				</plugin>
+			</plugins>
+		</pluginManagement>
+
 		<plugins>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>

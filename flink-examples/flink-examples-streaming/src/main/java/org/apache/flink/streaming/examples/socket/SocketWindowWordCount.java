@@ -120,12 +120,7 @@ public class SocketWindowWordCount {
 				.keyBy("word")
 				//.timeWindow(Time.seconds(5))
 
-				.reduce(new ReduceFunction<WordWithCount>() {
-					@Override
-					public WordWithCount reduce(WordWithCount a, WordWithCount b) {
-						return new WordWithCount(a.word, a.count + b.count);
-					}
-				});
+				.reduce((ReduceFunction<WordWithCount>) (a, b) -> new WordWithCount(a.word, a.count + b.count));
 
 		// print the results with a single thread, rather than in parallel
 		windowCounts.print().setParallelism(1);
