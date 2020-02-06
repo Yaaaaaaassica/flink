@@ -190,7 +190,7 @@ public class StreamingJobGraphGenerator {
 			throw new IllegalConfigurationException("Could not serialize the ExecutionConfig." +
 					"This indicates that non-serializable types (like custom serializers) were registered");
 		}
-
+        LOG.info("[JobGraph] {}",jobGraph);
 		return jobGraph;
 	}
 
