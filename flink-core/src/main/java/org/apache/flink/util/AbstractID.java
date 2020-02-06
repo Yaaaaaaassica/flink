@@ -21,6 +21,7 @@ package org.apache.flink.util;
 import org.apache.flink.annotation.PublicEvolving;
 
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * A statistically unique identification number.
@@ -31,6 +32,7 @@ public class AbstractID implements Comparable<AbstractID>, java.io.Serializable 
 	private static final long serialVersionUID = 1L;
 
 	private static final Random RND = new Random();
+	private static final AtomicLong INCREAMENT=new AtomicLong();
 
 	/** The size of a long in bytes. */
 	private static final int SIZE_OF_LONG = 8;
@@ -91,8 +93,11 @@ public class AbstractID implements Comparable<AbstractID>, java.io.Serializable 
 	 * Constructs a new random ID from a uniform distribution.
 	 */
 	public AbstractID() {
-		this.lowerPart = RND.nextLong();
-		this.upperPart = RND.nextLong();
+//		this.lowerPart = RND.nextLong();
+//		this.upperPart = RND.nextLong();
+		// only for local test
+		this.lowerPart = INCREAMENT.getAndIncrement();
+		this.upperPart = INCREAMENT.getAndIncrement();
 	}
 
 	// --------------------------------------------------------------------------------------------

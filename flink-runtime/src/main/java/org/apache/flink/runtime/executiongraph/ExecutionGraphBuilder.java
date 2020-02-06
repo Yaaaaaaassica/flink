@@ -354,7 +354,7 @@ public class ExecutionGraphBuilder {
 		metrics.gauge(UpTimeGauge.METRIC_NAME, new UpTimeGauge(executionGraph));
 
 		executionGraph.getFailoverStrategy().registerMetrics(metrics);
-
+         log.info("[executionGraph] {}",executionGraph);
 		return executionGraph;
 	}
 

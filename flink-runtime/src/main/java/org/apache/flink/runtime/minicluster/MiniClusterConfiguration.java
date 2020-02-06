@@ -142,7 +142,7 @@ public class MiniClusterConfiguration {
 	 */
 	public static class Builder {
 		private Configuration configuration = new Configuration();
-		private int numTaskManagers = 1;
+		private int numTaskManagers = 4; //fixme
 		private int numSlotsPerTaskManager = 1;
 		private RpcServiceSharing rpcServiceSharing = SHARED;
 		@Nullable
