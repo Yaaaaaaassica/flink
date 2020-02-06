@@ -118,7 +118,7 @@ under the License.
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
 			<version>1.16.22</version>
-			<scope>test</scope>
+			<scope>provided</scope>
 		</dependency>
 
 	</dependencies>

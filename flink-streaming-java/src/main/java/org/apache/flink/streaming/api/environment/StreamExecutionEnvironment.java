@@ -17,6 +17,7 @@
 
 package org.apache.flink.streaming.api.environment;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.Public;
 import org.apache.flink.annotation.PublicEvolving;
@@ -118,6 +119,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * @see org.apache.flink.streaming.api.environment.LocalStreamEnvironment
  * @see org.apache.flink.streaming.api.environment.RemoteStreamEnvironment
  */
+@Slf4j
 @Public
 public class StreamExecutionEnvironment {
 
@@ -1718,6 +1720,7 @@ public class StreamExecutionEnvironment {
 	@Internal
 	public JobClient executeAsync(StreamGraph streamGraph) throws Exception {
 		checkNotNull(streamGraph, "StreamGraph cannot be null.");
+		log.info("[StreamGraph] 构建streamgraph {}",streamGraph);
 		checkNotNull(configuration.get(DeploymentOptions.TARGET), "No execution.target specified in your configuration file.");
 
 		final PipelineExecutorFactory executorFactory =
