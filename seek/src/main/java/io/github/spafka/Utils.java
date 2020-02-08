@@ -43,6 +43,7 @@ public class Utils {
 		StreamExecutionEnvironment localEnvironmentWithWebUI = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(configuration);
 
 		localEnvironmentWithWebUI.getCheckpointConfig().setCheckpointInterval(10000L);
+		localEnvironmentWithWebUI.setBufferTimeout(0L);
 		try {
 			localEnvironmentWithWebUI.setStateBackend(new RocksDBStateBackend(CHECKPOINTS_DIRECTORY));
 		} catch (IOException e) {

@@ -205,7 +205,7 @@ public class SingleInputGateFactory {
 			ChannelStatistics channelStatistics,
 			InputChannelMetrics metrics) {
 		ResultPartitionID partitionId = inputChannelDescriptor.getResultPartitionID();
-		if (inputChannelDescriptor.isLocalTo(taskExecutorResourceId)) {
+		if (inputChannelDescriptor.isLocalTo(taskExecutorResourceId) && false) {
 			// Consuming task is deployed to the same TaskManager as the partition => local
 			channelStatistics.numLocalChannels++;
 			return new LocalInputChannel(
