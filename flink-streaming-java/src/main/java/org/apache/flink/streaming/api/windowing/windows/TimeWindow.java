@@ -29,13 +29,7 @@ import org.apache.flink.streaming.api.windowing.assigners.MergingWindowAssigner;
 import org.apache.flink.util.MathUtils;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 /**
  * A {@link Window} that represents a time interval from {@code start} (inclusive) to
@@ -108,8 +102,8 @@ public class TimeWindow extends Window {
 	@Override
 	public String toString() {
 		return "TimeWindow{" +
-				"start=" + start +
-				", end=" + end +
+				"start=" + new Date(start) +
+				", end=" + new Date(end) +
 				'}';
 	}
 
