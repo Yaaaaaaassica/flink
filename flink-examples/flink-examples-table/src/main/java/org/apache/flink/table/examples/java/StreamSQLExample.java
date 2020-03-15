@@ -48,7 +48,7 @@ public class StreamSQLExample {
 	public static void main(String[] args) throws Exception {
 
 		final ParameterTool params = ParameterTool.fromArgs(args);
-		String planner = params.has("planner") ? params.get("planner") : "flink";
+		String planner = params.has("planner") ? params.get("planner") : "blink";
 
 		// set up execution environment
 		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();

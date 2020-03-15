@@ -89,8 +89,8 @@ public class GroupedProcessingTimeWindowExample {
 			.timeWindow(Time.of(5, SECONDS))
 			.allowedLateness(Time.of(1, SECONDS))
 			.sideOutputLateData(lateOutputTag)
-			.process( new ProcessWindowFunction1())
-			//.reduce(new SummingReducer(), new PassThroughWindowChechPointFunction());
+			//.process( new ProcessWindowFunction1())
+			.reduce(new SummingReducer(), new PassThroughWindowChechPointFunction());
 		reduce
                 .addSink(new SinkFunction<Tuple2<Long, Long>>() {
                     @Override

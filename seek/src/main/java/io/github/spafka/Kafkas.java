@@ -41,12 +41,12 @@ public class Kafkas {
 			}
 		}).start();
 
-		TimeUnit.SECONDS.sleep(5);
+		TimeUnit.SECONDS.sleep(1);
 
 		IntStream.rangeClosed(1, 3).forEach(x -> {
 			new Thread(() -> {
 				try {
-					FileUtils.deleteDirectory(new File("/tmp/kafka/data" + x));
+					FileUtils.deleteDirectory(new File("/var/kafka" + x));
 
 
 					InputStream is = Kafkas.class.getResourceAsStream("/server" + x + ".properties");
@@ -64,6 +64,8 @@ public class Kafkas {
 			}).start();
 		});
 
+
+		TimeUnit.SECONDS.sleep(100000);
 
 	}
 

@@ -22,6 +22,8 @@ import org.apache.flink.runtime.io.network.TaskEventPublisher;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionProvider;
 
 import org.apache.flink.shaded.netty4.io.netty.channel.ChannelHandler;
+import org.apache.flink.shaded.netty4.io.netty.handler.logging.LogLevel;
+import org.apache.flink.shaded.netty4.io.netty.handler.logging.LoggingHandler;
 
 /**
  * Defines the server and client channel handlers, i.e. the protocol, used by netty.
@@ -80,6 +82,7 @@ public class NettyProtocol {
 			queueOfPartitionQueues);
 
 		return new ChannelHandler[] {
+			new LoggingHandler(LogLevel.INFO),
 			messageEncoder,
 			new NettyMessage.NettyMessageDecoder(),
 			serverHandler,
@@ -121,6 +124,7 @@ public class NettyProtocol {
 	 */
 	public ChannelHandler[] getClientChannelHandlers() {
 		return new ChannelHandler[] {
+			new LoggingHandler(LogLevel.INFO),
 			messageEncoder,
 			new NettyMessage.NettyMessageDecoder(),
 			new CreditBasedPartitionRequestClientHandler()};
